@@ -8,32 +8,85 @@ milestone. "Not run" means it was not run — never fabricate.
 - [x] Phase 1 — Foundation
 - [x] Phase 2 — GitHub App Security (code + tests + smoke done; live
       install verification pending app registration)
-- [ ] Phase 3 — Repository Onboarding   **(current — next)**
-- [ ] Phase 4 — PR Review MVP
+- [x] Phase 3 — Repository Onboarding (code + tests + smoke done; live
+      end-to-end install verification pending app registration)
+- [ ] Phase 4 — PR Review MVP   **(current — next)**
 - [ ] Phase 5 — Reliability & Security
 - [ ] Phase 6 — Deployment & Release
 
-Project status: Phases 1–2 complete (2026-09-13). Quality gates passed
-with evidence below. Live GitHub integration (real install events) still
-requires the manual app registration — tracked under Blockers; it gates
-Phase 2's *live* milestone but not Phase 3 implementation work.
+Project status: Phases 1–3 complete (2026-09-13). Quality gates passed
+with evidence below. Live GitHub integration (real install events →
+onboarding issue) still requires the manual app registration — tracked
+under Blockers; it gates live verification but not Phase 4 implementation
+work.
 
-## Current phase — Phase 3: Repository Onboarding (next)
+## Current phase — Phase 4: PR Review MVP (next)
 
-Milestones (from spec §15, §8):
+Milestones (from spec §15, §9):
 
-- [ ] Manifest detection (package.json, tsconfig.json, requirements.txt,
-      pyproject.toml, go.mod, Cargo.toml, pom.xml, composer.json, Gemfile)
-- [ ] Repo tree fetching + top-level structure (ignore node_modules/dist/build/.git)
-- [ ] Deterministic onboarding report builder
-- [ ] Issue posting (`RepoLens onboarding report`)
-- [ ] `.repolens.yml` parsing + validation + safe defaults (spec §10)
-- [ ] Wire installation.created → onboarding job (inline until Phase 4 queue)
+- [ ] `src/github/pulls.ts` — PR files API fetch (per-file patch, status)
+- [ ] `src/analyze/diff.ts` — filters (lockfiles/binaries/generated/>500
+      changed lines) + budget (default 1500 changed lines) + skipped notes
+- [ ] `src/llm/provider.ts` — LLMProvider interface + prompt templates
+      (repo content delimited as untrusted data)
+- [ ] `src/llm/gemini.ts` — Gemini Flash adapter behind the interface
+- [ ] `src/queue/consumer.ts` — onboarding_job/review_job handlers; move
+      webhook inline `waitUntil` work to queue producer/consumer
+- [ ] Single `### RepoLens review` comment per delivery; empty/fully
+      filtered diff → no comment; `synchronize` → new comment (no updates)
 
-Exact next action: implement `src/analyze/manifests.ts` + tests with
-fixture JSON, then `src/config/repolens-yml.ts` (defaults on any error),
-then report builder + `src/github/repos.ts`/`issues.ts` with mocked
-Octokit-style fetch. All GitHub calls mocked in tests.
+Exact next action: implement `src/github/pulls.ts` + mocked-fetch tests,
+then `src/analyze/diff.ts` filter/budget tests, then `src/llm/provider.ts`
++ `src/llm/gemini.ts` with mocked fetch, then queue consumer + webhook
+producer wiring; wrangler dev smoke with a signed `pull_request` event.
+
+## Completed — Phase 3: Repository Onboarding
+
+Milestones:
+
+- [x] Manifest detection (all 9 spec §8 manifests) with deterministic
+      dependency counting per ecosystem
+- [x] Repo tree fetching + root-level structure (node_modules/dist/build/
+      .git filtered in the report)
+- [x] Deterministic onboarding report builder (markdown-escaped untrusted
+      strings, size-capped root listing)
+- [x] Issue posting (`RepoLens onboarding report`) via installation token
+- [x] `.repolens.yml` parsing + validation + safe defaults (spec §10):
+      YAML-subset parser, never throws, invalid → defaults + note,
+      missing → defaults without note
+- [x] `installation.created` → one onboarding job per accessible repo via
+      `waitUntil` (inline; queue producer/consumer replaces it in Phase 4)
+
+Implementation notes:
+
+- `src/analyze/manifests.ts` — pure analysis over pre-fetched files; hard
+  256KB parse cap per file; malformed manifests degrade to zero counts.
+  Counting rules documented per ecosystem (npm/composer key counts,
+  requirements.txt non-option lines, PEP-621 + poetry, go.mod require
+  blocks, Cargo [dependencies], pom `<dependency>` count, Gemfile gems).
+- `src/config/repolens-yml.ts` — hand-rolled YAML subset (fixed decision:
+  no YAML dependency); flow collections/anchors/block scalars/tabs are
+  parse errors; budget values capped (50k/10k lines) so config cannot
+  inflate limits; `exclude` optional (empty when omitted).
+- `src/github/repos.ts` — metadata/tree/contents with `fetchImpl`
+  injectable; status-only error messages (no response bodies); 404 files
+  skipped; oversized blobs skipped and reported; 256KB/file, 512KB total,
+  32-file caps; truncated tree is an error (no partial analysis).
+- `src/github/issues.ts` — creates the report issue; status-only errors.
+- `src/analyze/onboarding.ts` — collects data → loads config → builds the
+  escaped deterministic report → posts the issue. `summary: llm` degrades
+  to deterministic-only with an explicit note until Phase 4 wires the
+  provider. Onboarding disabled in config → skipped, no issue.
+- `src/routes/webhook.ts` — installation payload parsed with allow-listed
+  fields only (action, installation.id, repositories[].name/full_name);
+  per-repo jobs scheduled via `waitUntil` after the response is prepared;
+  background failures swallowed with one safe log line; response always
+  200 after verification/dedupe.
+- Session fix: `src/analyze/onboarding.ts` had corrupted double-backslash
+  escapes from the previous session (broke template literals → parse
+  errors in every suite importing it); file rewritten cleanly, all
+  report output unchanged. `test/debug-report.test.ts` (temporary debug
+  file) deleted.
 
 ## Completed — Phase 2: GitHub App Security
 
@@ -84,10 +137,10 @@ Notes:
 
 | Check | Result | Notes |
 |---|---|---|
-| vitest | Pass (2026-09-13) | 28 tests / 3 files: HMAC (7), PEM/JWT (5), token cache (4), webhook route (11), health (1) |
-| biome check | Pass (2026-09-13) | 14 files, exit 0 |
-| tsc --noEmit | Pass (2026-09-13) | strict, exit 0 |
-| wrangler dev smoke | Pass (2026-09-13) | unsigned→401; signed ping→200; duplicate delivery→200 skipped; wrong-secret→401; safe log lines observed |
+| vitest | Pass (2026-09-13, Phase 3) | 7 files, 76 tests: HMAC (7), PEM/JWT (5), token cache (4), webhook route (15 incl. onboarding wiring), health (1), manifests (15), repolens-yml (11), onboarding report/job (7), repos/issues helpers (11) |
+| biome check | Pass (2026-09-13, Phase 3) | 23 files, exit 0 |
+| tsc --noEmit | Pass (2026-09-13, Phase 3) | strict, exit 0 |
+| wrangler dev smoke | Pass (2026-09-13, Phase 3) | unsigned→401; wrong secret→401; signed ping→200; signed installation.created→200; duplicate delivery→200 skipped; healthz→200; logs safe single lines only. (First smoke run of case 4 sent a mismatched-signature body — worker correctly returned 401; re-run with correct signature → 200.) |
 | smee webhook loop | Pass (2026-09-13, Phase 1) | end-to-end channel → local worker 200 |
 | CI | Not run | Workflow is added in Phase 6 per spec |
 | Live install events | Not run | Blocked on manual GitHub App registration (spec §6) |
@@ -102,35 +155,42 @@ Notes:
 | 2026-09-13 | Hand-rolled HMAC verify + WebCrypto JWT instead of `@octokit/webhooks` verify | Small surface, Workers-native, exact control over fail-closed behavior; `@octokit/app`/`auth-app` available for higher-level needs later |
 | 2026-09-13 | `fetchImpl` injectable in `auth.ts` | Mocked-fetch tests without real GitHub API; works in workerd test pool |
 | 2026-09-13 | Smoke test used a disposable `.dev.vars` secret value, deleted after | Verifies real HMAC path end-to-end without touching real credentials |
+| 2026-09-13 | Hand-rolled YAML subset parser for `.repolens.yml` (no yaml dependency) | Schema is tiny and known; a subset parser can never throw and keeps $0 deps; anything outside the subset → defaults + note (spec §13) |
+| 2026-09-13 | Inline `waitUntil` onboarding jobs in Phase 3 (queue in Phase 4) | spec §15 orders queue wiring with Phase 4; webhook still responds before any GitHub call |
+| 2026-09-13 | Status-only GitHub error messages (no response bodies) | Response bodies can echo untrusted repo/HTTP content; spec §13 forbids that in logs/errors |
 
 ## Blockers
 
 - GitHub App registration (manual, spec §6) — required for live install
-  event verification. All code paths are covered by mocked tests + local
-  smoke tests meanwhile. Step-by-step guidance is at the bottom of this
-  file; share when ready to register.
+  → onboarding-issue verification. All code paths are covered by mocked
+  tests + local smoke tests meanwhile. Step-by-step guidance is at the
+  bottom of this file; share when ready to register.
 
 ## Session handoff
 
 ```text
 Date: 2026-09-13
-Phase: 2 → 3 transition (Phases 1–2 complete)
+Phase: 3 → 4 transition (Phases 1–3 complete)
 Completed this session:
-  - Phase 1 full scaffold + gate (commit 0f0d319)
-  - Phase 2: verify.ts, auth.ts (JWT + installation token + KV cache),
-    webhook route (401/400/dedupe/ping/installation), 25 new tests,
-    wrangler dev smoke of all four security paths
+  - Phase 3: manifests.ts, repolens-yml.ts, repos.ts, issues.ts,
+    onboarding.ts (report builder + job runner), webhook wiring of
+    installation.created → per-repo onboarding jobs
+  - Fixed corrupted escapes in onboarding.ts (previous session), fixed
+    webhook wiring test (real test RSA key + serving mock), rejected
+    flow collections in the YAML subset, deleted debug-report.test.ts
 Evidence (actual command results):
-  - vitest run: 3 files, 28 tests passed
-  - biome check: exit 0 (14 files)
+  - vitest run: 7 files, 76 tests passed
+  - biome check: exit 0 (23 files)
   - tsc --noEmit: exit 0
-  - wrangler dev smoke: 401 unsigned / 200 signed / duplicate skipped /
-    401 wrong secret; logs show safe single-line messages only
-Next exact action: Phase 3 — src/analyze/manifests.ts + fixture tests,
-then .repolens.yml config parser, then onboarding report builder and
-github/repos.ts + github/issues.ts with mocked fetch; wire
-installation.created → onboarding issue.
-Blockers: none for Phase 3 code/tests; live verification needs app
+  - wrangler dev smoke: 401 unsigned / 401 wrong secret / 200 signed ping
+    / 200 signed installation.created / 200 duplicate skipped / 200
+    healthz; logs show safe single-line messages only; disposable
+    .dev.vars deleted after
+Next exact action: Phase 4 — src/github/pulls.ts + diff budgets +
+LLMProvider + Gemini adapter + queue producer/consumer; single review
+comment per delivery; mocked tests only; wrangler dev smoke with signed
+pull_request event.
+Blockers: none for Phase 4 code/tests; live verification needs app
 registration (manual).
 ```
 

@@ -25,6 +25,39 @@ function testEnv(): Env {
 /** Local KV binding via our Env typing (same runtime object). */
 const kv = (env as unknown as Env).IDEMPOTENCY_KV
 
+/**
+ * Generates a throwaway RSA key so background onboarding jobs can sign
+ * an app JWT in tests (never a real credential).
+ */
+async function generateTestPrivateKeyPem(): Promise<string> {
+  const pair = (await crypto.subtle.generateKey(
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: 'SHA-256',
+    },
+    true,
+    ['sign'],
+  )) as CryptoKeyPair
+  const der = (await crypto.subtle.exportKey(
+    'pkcs8',
+    pair.privateKey,
+  )) as ArrayBuffer
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)))
+  const lines = base64.match(/.{1,64}/g)?.join('\n') ?? base64
+  return `-----BEGIN PRIVATE KEY-----\n${lines}\n-----END PRIVATE KEY-----\n`
+}
+
+function envWithPrivateKey(privateKeyPem: string): Env {
+  return {
+    ...(env as object),
+    GH_APP_ID: '12345',
+    GH_PRIVATE_KEY: privateKeyPem,
+    GH_WEBHOOK_SECRET: TEST_SECRET,
+  } as unknown as Env
+}
+
 async function signedPayload(
   payload: string,
   secret = TEST_SECRET,
@@ -260,6 +293,152 @@ describe('POST /webhook — event routing', () => {
     })
     const res = await handleWebhook(noDelivery, testEnv())
     expect(res.status).toBe(400)
+  })
+})
+
+describe('POST /webhook — installation.created onboarding wiring', () => {
+  /** Captures background jobs instead of running them. */
+  function captureWaitUntil(): {
+    jobs: Promise<unknown>[]
+    runAll: () => Promise<void>
+  } {
+    const jobs: Promise<unknown>[] = []
+    return {
+      jobs,
+      runAll: async () => {
+        await Promise.allSettled(jobs)
+      },
+    }
+  }
+
+  function installationBody(): string {
+    return JSON.stringify({
+      action: 'created',
+      installation: { id: 55 },
+      repositories: [
+        { name: 'alpha', full_name: 'octo/alpha' },
+        { name: 'beta', full_name: 'octo/beta' },
+      ],
+    })
+  }
+
+  it('schedules one onboarding job per repository', async () => {
+    const captured = captureWaitUntil()
+    const calls: string[] = []
+    // Serves the token exchange and repo metadata, records everything,
+    // and throws afterwards so jobs stop early (failures are swallowed
+    // by design; we only assert which API calls were attempted).
+    const fetchImpl = (async (url: RequestInfo | URL): Promise<Response> => {
+      const urlText = String(url)
+      calls.push(urlText)
+      if (urlText.includes('/access_tokens')) {
+        return new Response(
+          JSON.stringify({
+            token: 'mock-installation-token',
+            expires_at: new Date(Date.now() + 3600_000).toISOString(),
+          }),
+          { status: 201 },
+        )
+      }
+      if (/\/repos\/octo\/(alpha|beta)$/.test(urlText)) {
+        return new Response(
+          JSON.stringify({
+            name: 'x',
+            full_name: 'octo/x',
+            default_branch: 'main',
+          }),
+          { status: 200 },
+        )
+      }
+      throw new Error('not used beyond call capture')
+    }) as typeof fetch
+
+    const body = installationBody()
+    const signature = await signedPayload(body)
+    // A real test key: the background job must get past JWT signing to
+    // reach the (mocked) GitHub fetch.
+    const jobEnv = envWithPrivateKey(await generateTestPrivateKeyPem())
+    const res = await handleWebhook(
+      webhookRequest({
+        body,
+        signature,
+        event: 'installation',
+        delivery: 'onboard-1',
+      }),
+      jobEnv,
+      { fetchImpl, waitUntilImpl: (p) => void captured.jobs.push(p) },
+    )
+    expect(res.status).toBe(200)
+    expect(captured.jobs).toHaveLength(2)
+    // Background jobs started with the mocked fetch (which records calls).
+    await captured.runAll()
+    expect(calls.some((url) => url.includes('/repos/octo/alpha'))).toBe(true)
+    expect(calls.some((url) => url.includes('/repos/octo/beta'))).toBe(true)
+    await kv.delete('delivery:onboard-1')
+  })
+
+  it('swallows background onboarding failures (response stays 200)', async () => {
+    const captured = captureWaitUntil()
+    const fetchImpl = (async (): Promise<Response> => {
+      return new Response('boom', { status: 500 })
+    }) as typeof fetch
+
+    const body = installationBody()
+    const signature = await signedPayload(body)
+    const res = await handleWebhook(
+      webhookRequest({
+        body,
+        signature,
+        event: 'installation',
+        delivery: 'onboard-2',
+      }),
+      testEnv(),
+      { fetchImpl, waitUntilImpl: (p) => void captured.jobs.push(p) },
+    )
+    expect(res.status).toBe(200)
+    await expect(captured.runAll()).resolves.toBeUndefined()
+    await kv.delete('delivery:onboard-2')
+  })
+
+  it('does not schedule onboarding for installation.deleted', async () => {
+    const captured = captureWaitUntil()
+    const body = JSON.stringify({
+      action: 'deleted',
+      installation: { id: 55 },
+    })
+    const signature = await signedPayload(body)
+    const res = await handleWebhook(
+      webhookRequest({
+        body,
+        signature,
+        event: 'installation',
+        delivery: 'onboard-3',
+      }),
+      testEnv(),
+      { waitUntilImpl: (p) => void captured.jobs.push(p) },
+    )
+    expect(res.status).toBe(200)
+    expect(captured.jobs).toHaveLength(0)
+    await kv.delete('delivery:onboard-3')
+  })
+
+  it('responds 200 on unparseable installation payloads', async () => {
+    const captured = captureWaitUntil()
+    const body = 'not json at all'
+    const signature = await signedPayload(body)
+    const res = await handleWebhook(
+      webhookRequest({
+        body,
+        signature,
+        event: 'installation',
+        delivery: 'onboard-4',
+      }),
+      testEnv(),
+      { waitUntilImpl: (p) => void captured.jobs.push(p) },
+    )
+    expect(res.status).toBe(200)
+    expect(captured.jobs).toHaveLength(0)
+    await kv.delete('delivery:onboard-4')
   })
 })
 
