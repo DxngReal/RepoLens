@@ -10,35 +10,86 @@ milestone. "Not run" means it was not run — never fabricate.
       install verification pending app registration)
 - [x] Phase 3 — Repository Onboarding (code + tests + smoke done; live
       end-to-end install verification pending app registration)
-- [ ] Phase 4 — PR Review MVP   **(current — next)**
-- [ ] Phase 5 — Reliability & Security
+- [x] Phase 4 — PR Review MVP (code + tests + smoke done; live PR review
+      verification pending app registration)
+- [ ] Phase 5 — Reliability & Security   **(current — next)**
 - [ ] Phase 6 — Deployment & Release
 
-Project status: Phases 1–3 complete (2026-09-13). Quality gates passed
+Project status: Phases 1–4 complete (2026-09-13). Quality gates passed
 with evidence below. Live GitHub integration (real install events →
-onboarding issue) still requires the manual app registration — tracked
-under Blockers; it gates live verification but not Phase 4 implementation
-work.
+onboarding issue, real PR → review comment) still requires the manual
+app registration — tracked under Blockers; it gates live verification
+but not Phase 5 implementation work.
 
-## Current phase — Phase 4: PR Review MVP (next)
+## Current phase — Phase 5: Reliability & Security (next)
 
-Milestones (from spec §15, §9):
+Milestones (from spec §13, §14, §15):
 
-- [ ] `src/github/pulls.ts` — PR files API fetch (per-file patch, status)
-- [ ] `src/analyze/diff.ts` — filters (lockfiles/binaries/generated/>500
-      changed lines) + budget (default 1500 changed lines) + skipped notes
-- [ ] `src/llm/provider.ts` — LLMProvider interface + prompt templates
-      (repo content delimited as untrusted data)
-- [ ] `src/llm/gemini.ts` — Gemini Flash adapter behind the interface
-- [ ] `src/queue/consumer.ts` — onboarding_job/review_job handlers; move
-      webhook inline `waitUntil` work to queue producer/consumer
-- [ ] Single `### RepoLens review` comment per delivery; empty/fully
-      filtered diff → no comment; `synchronize` → new comment (no updates)
+- [ ] Retry/backoff on GitHub 429/5xx and LLM 429/5xx (max 3 attempts,
+      exponential backoff), then graceful degradation
+- [ ] Secret redaction before content leaves the Worker (LLM prompts,
+      logs): obvious token/credential patterns
+- [ ] Injection defenses hardening: untrusted content delimiters checked
+      end-to-end (already in prompts); add output fence verification
+- [ ] Error taxonomy: typed error classes per layer with status codes;
+      consistent single-line safe logging
+- [ ] Hardened logging pass: audit every console call for payload/header
+      leakage; request-id correlation without content
+- [ ] Fault tests: retry counts, redaction cases, degrade paths
 
-Exact next action: implement `src/github/pulls.ts` + mocked-fetch tests,
-then `src/analyze/diff.ts` filter/budget tests, then `src/llm/provider.ts`
-+ `src/llm/gemini.ts` with mocked fetch, then queue consumer + webhook
-producer wiring; wrangler dev smoke with a signed `pull_request` event.
+Exact next action: audit current retry/degrade behavior (queue retry
+exists; per-call backoff in `auth.ts`/`pulls.ts`/`issues.ts`/`gemini.ts`
+does not), then add a shared retry helper with backoff + redaction
+module + fault tests (mocked fetch only).
+
+## Completed — Phase 4: PR Review MVP
+
+Milestones:
+
+- [x] `src/github/pulls.ts` — PR metadata + changed-files fetch (Files
+      API, up to 3 pages × 100, status/additions/deletions/patch,
+      `fetchImpl` injectable, status-only errors)
+- [x] `src/analyze/diff.ts` — ordered filters (exclude globs → no-patch →
+      lockfile → generated → maxFileLines 500 → maxDiffLines 1500
+      budget), skipped-file notes, glob-subset matcher, hard-capped
+      diff context builder with untrusted-data delimiters
+- [x] `src/llm/provider.ts` — `LLMProvider` interface, system prompt with
+      honesty rules + injection fence + exact output shape, user prompt
+      with `<diff_begin>/<diff_end>` untrusted-data delimiters
+- [x] `src/llm/gemini.ts` — Gemini Flash REST adapter, `fetchImpl`
+      injectable, 500k char hard prompt cap, status-only errors
+- [x] `src/queue/consumer.ts` — strict allow-listed message parsing
+      (poison → ack), onboarding_job/review_job handlers, retry on
+      failure, provider built from env (missing key → deterministic-only)
+- [x] `src/analyze/review.ts` — full review job: draft-PR skip, review
+      disabled skip, empty-diff/all-filtered → no comment, LLM →
+      sanitize (end-marker strip, heading dedupe, 6k cap) → exactly one
+      `### RepoLens review` comment with honest footer; deterministic
+      degrade with explicit note on LLM failure; `synchronize` → new
+      comment (no updates — delivery idempotency prevents double posts)
+- [x] `src/routes/webhook.ts` — queue producer: `REVIEW_QUEUE.send` when
+      bound, inline `waitUntil` fallback in tests/dev, degrade-to-inline
+      on queue.send failure
+
+Implementation notes:
+
+- Wrangler config carries producers + consumers for `repolens-jobs`
+  (max_batch_size 5, max_retries 3, DLQ `repolens-jobs-dlq`).
+- Comment footer honestly states whether diff content was sent to the
+  LLM and how to disable via `.repolens.yml` (spec §11).
+- `sanitizeReviewOutput` strips everything after `---END OF REVIEW---`
+  (injection containment), removes a repeated heading, caps length.
+- Secrets: only status-only strings in logs/errors; no payload text.
+
+Smoke evidence (wrangler dev, 2026-09-13):
+
+- unsigned pull_request.opened → 401; wrong-secret → 401; signed → 200;
+  duplicate delivery id → 200 skipped; second signed delivery → 200;
+  healthz → 200.
+- Local queue actually consumed the review_job: 3 failed attempts (no
+  real credentials available) then dropped per max_retries — worker
+  stayed healthy; logs were single safe lines only. Disposable
+  `.dev.vars` deleted after the smoke run.
 
 ## Completed — Phase 3: Repository Onboarding
 
@@ -137,10 +188,10 @@ Notes:
 
 | Check | Result | Notes |
 |---|---|---|
-| vitest | Pass (2026-09-13, Phase 3) | 7 files, 76 tests: HMAC (7), PEM/JWT (5), token cache (4), webhook route (15 incl. onboarding wiring), health (1), manifests (15), repolens-yml (11), onboarding report/job (7), repos/issues helpers (11) |
-| biome check | Pass (2026-09-13, Phase 3) | 23 files, exit 0 |
-| tsc --noEmit | Pass (2026-09-13, Phase 3) | strict, exit 0 |
-| wrangler dev smoke | Pass (2026-09-13, Phase 3) | unsigned→401; wrong secret→401; signed ping→200; signed installation.created→200; duplicate delivery→200 skipped; healthz→200; logs safe single lines only. (First smoke run of case 4 sent a mismatched-signature body — worker correctly returned 401; re-run with correct signature → 200.) |
+| vitest | Pass (2026-09-13, Phase 4) | 10 files, 103 tests: HMAC (7), PEM/JWT (5), token cache (4), webhook route (19 incl. queue producer wiring), health (1), manifests (15), repolens-yml (11), onboarding (7), repos/issues helpers (11), review job (9), diff filters/budgets (9), queue consumer (5) |
+| biome check | Pass (2026-09-13, Phase 4) | 32 files, exit 0 |
+| tsc --noEmit | Pass (2026-09-13, Phase 4) | strict, exit 0 |
+| wrangler dev smoke | Pass (2026-09-13, Phase 4) | unsigned pull_request→401; wrong secret→401; signed pull_request.opened→200; duplicate delivery→200 skipped; second signed delivery→200; healthz→200; local queue consumed review_job and retried 3× (no real credentials) then dropped; logs safe single lines only; disposable .dev.vars deleted after |
 | smee webhook loop | Pass (2026-09-13, Phase 1) | end-to-end channel → local worker 200 |
 | CI | Not run | Workflow is added in Phase 6 per spec |
 | Live install events | Not run | Blocked on manual GitHub App registration (spec §6) |
@@ -170,27 +221,27 @@ Notes:
 
 ```text
 Date: 2026-09-13
-Phase: 3 → 4 transition (Phases 1–3 complete)
+Phase: 4 → 5 transition (Phases 1–4 complete)
 Completed this session:
-  - Phase 3: manifests.ts, repolens-yml.ts, repos.ts, issues.ts,
-    onboarding.ts (report builder + job runner), webhook wiring of
-    installation.created → per-repo onboarding jobs
-  - Fixed corrupted escapes in onboarding.ts (previous session), fixed
-    webhook wiring test (real test RSA key + serving mock), rejected
-    flow collections in the YAML subset, deleted debug-report.test.ts
+  - Verified Phase 4 implementation already present in HEAD (pulls.ts,
+    diff.ts, provider.ts, gemini.ts, consumer.ts, review.ts, webhook
+    queue producer) — not re-implemented, only verified against spec §9
+  - Filled PROGRESS.md gap: Phase 4 was coded+committed last session but
+    never marked complete or evidence-logged
 Evidence (actual command results):
-  - vitest run: 7 files, 76 tests passed
-  - biome check: exit 0 (23 files)
+  - vitest run: 10 files, 103 tests passed
+  - biome check: exit 0 (32 files)
   - tsc --noEmit: exit 0
-  - wrangler dev smoke: 401 unsigned / 401 wrong secret / 200 signed ping
-    / 200 signed installation.created / 200 duplicate skipped / 200
-    healthz; logs show safe single-line messages only; disposable
-    .dev.vars deleted after
-Next exact action: Phase 4 — src/github/pulls.ts + diff budgets +
-LLMProvider + Gemini adapter + queue producer/consumer; single review
-comment per delivery; mocked tests only; wrangler dev smoke with signed
-pull_request event.
-Blockers: none for Phase 4 code/tests; live verification needs app
+  - wrangler dev smoke (signed pull_request): 401 unsigned / 401 wrong
+    secret / 200 signed opened / 200 duplicate skipped / 200 second
+    delivery / 200 healthz; local queue consumed review_job, retried 3×
+    without real credentials then dropped; safe single-line logs;
+    disposable .dev.vars deleted after
+Next exact action: Phase 5 — shared retry/backoff helper for GitHub
+429/5xx + LLM 429/5xx (queue-level retry exists; per-call backoff does
+not), secret redaction before prompts/logs, hardened logging audit,
+fault tests (mocked fetch only).
+Blockers: none for Phase 5 code/tests; live verification needs app
 registration (manual).
 ```
 

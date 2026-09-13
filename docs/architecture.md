@@ -30,20 +30,23 @@ Queue consumer → job handler                                 [Phase 3–4]
 | `src/github/verify.ts` | X-Hub-Signature-256 verification (constant-time) | done (Phase 2) |
 | `src/github/auth.ts` | App JWT (RS256/WebCrypto), installation token + KV cache | done (Phase 2) |
 | `src/github/repos.ts` | Tree/contents helpers | done (Phase 3) |
-| `src/github/issues.ts` | Create issue / PR comment | done (Phase 3; PR comment in Phase 4) |
-| `src/github/pulls.ts` | Fetch PR diff/files | Phase 4 |
+| `src/github/issues.ts` | Create issue / PR comment | done (Phase 3/4) |
+| `src/github/pulls.ts` | PR metadata + changed-files fetch (3 pages max) | done (Phase 4) |
 | `src/analyze/manifests.ts` | Manifest detection + dependency counts | done (Phase 3) |
 | `src/analyze/onboarding.ts` | Deterministic report builder + onboarding job | done (Phase 3) |
-| `src/analyze/diff.ts` | Diff fetch + filtering + budgets | Phase 4 |
-| `src/llm/*` | LLMProvider interface, Gemini adapter, prompts | Phase 4 |
-| `src/queue/consumer.ts` | onboarding_job / review_job handlers | Phase 4 |
+| `src/analyze/diff.ts` | Filters (lockfile/generated/no-patch/too-large), 1500-line budget, exclude globs | done (Phase 4) |
+| `src/analyze/review.ts` | Review job: prompt → LLM → sanitize → one comment | done (Phase 4) |
+| `src/llm/provider.ts` | `LLMProvider` interface + injection-fenced prompts | done (Phase 4) |
+| `src/llm/gemini.ts` | Gemini Flash adapter (status-only errors) | done (Phase 4) |
+| `src/queue/consumer.ts` | onboarding_job / review_job handlers, ack/retry/DLQ policy | done (Phase 4) |
 | `src/config/repolens-yml.ts` | `.repolens.yml` parse + validate + defaults | done (Phase 3) |
 
-Phase 3 note: `installation.created` runs one onboarding job per newly
-accessible repo via `waitUntil` (inline background work; the queue
-producer/consumer replaces this in Phase 4). The deterministic report is
-fully escaped markdown; the LLM summary slot degrades to an explicit note
-until Phase 4 wires the provider.
+Phase 4 note: jobs go to `REVIEW_QUEUE` when the binding is present
+(production); without a binding (unit tests, minimal local dev) the same
+job runs inline under `waitUntil`, and a failed `queue.send` degrades to
+inline execution. A missing `GEMINI_API_KEY` (or an LLM error) degrades
+the review to a deterministic-only comment with an explicit note —
+never a fake or half review.
 
 ## Key invariants
 
@@ -57,10 +60,14 @@ until Phase 4 wires the provider.
 
 ## Status
 
-Phases 1–3 are complete: Hono app, `/healthz`, webhook HMAC verification
+Phases 1–4 are complete: Hono app, `/healthz`, webhook HMAC verification
 (fail-closed 401), KV delivery-id idempotency (24h TTL), RS256 JWT
 signing via WebCrypto, installation token fetching with KV cache,
-`ping`/`installation` routing, and the Phase 3 onboarding pipeline
+`ping`/`installation`/`pull_request` routing, the onboarding pipeline
 (manifest detection, root-tree fetch, `.repolens.yml` config, escaped
-deterministic report, report issue posting). Next: Phase 4 — PR review
-(files API, diff budgets, LLMProvider + Gemini adapter, queue wiring).
+deterministic report, report issue posting), and the PR review pipeline
+(files API → filters/budgets → LLMProvider/Gemini → sanitized single
+`### RepoLens review` comment; deterministic degrade on LLM failure;
+queue producer/consumer with ack/retry/DLQ). Next: Phase 5 — reliability
+& security hardening (backoff, secret redaction, injection defenses,
+error taxonomy).
