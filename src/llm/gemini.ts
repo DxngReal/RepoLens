@@ -9,6 +9,8 @@
  * message.
  */
 
+import { LLMError } from '../errors'
+import { fetchWithRetry } from '../util/retry'
 import type { LLMProvider } from './provider'
 
 const DEFAULT_ENDPOINT =
@@ -17,12 +19,13 @@ const DEFAULT_ENDPOINT =
 /** Conservative request cap so one job cannot ship huge payloads. */
 const MAX_PROMPT_CHARS = 500_000
 
-export class LlmError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message)
+/** Wall-clock budget for one LLM call (spec §13: LLM timeout → degrade). */
+const LLM_TIMEOUT_MS = 25_000
+
+/** Gemini-layer typed error (extends the shared LLM taxonomy). */
+export class LlmError extends LLMError {
+  constructor(status: number, message: string) {
+    super(status, message)
     this.name = 'LlmError'
   }
 }
@@ -64,14 +67,15 @@ export function createGeminiProvider(
       }
       let response: Response
       try {
-        response = await fetchImpl(endpoint, {
+        response = await fetchWithRetry(fetchImpl, endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-goog-api-key': options.apiKey,
           },
+          signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
           body: JSON.stringify({
-            // v0.1: one call, no thinking budget, modest output cap.
+            // v0.1: one logical call, no thinking budget, modest output cap.
             generationConfig: { maxOutputTokens: 1024, temperature: 0.2 },
             contents: [{ role: 'user', parts: [{ text: input }] }],
           }),

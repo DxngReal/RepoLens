@@ -15,6 +15,7 @@
 import { runOnboardingJob } from '../analyze/onboarding'
 import { runReviewJob } from '../analyze/review'
 import type { Env } from '../env'
+import { logSafe } from '../errors'
 import { createGeminiProvider } from '../llm/gemini'
 import type { LLMProvider } from '../llm/provider'
 
@@ -117,9 +118,12 @@ export async function handleQueueMessage(
       }
     }
     return 'ack'
-  } catch {
-    // One safe line; error text may carry untrusted content (spec §13).
-    console.log(`queue: job errored (${message.type}) — will retry`)
+  } catch (error: unknown) {
+    // One safe line; error text may carry untrusted content (spec §13),
+    // so only the typed error name + numeric status are logged.
+    console.log(
+      logSafe(['queue: job errored', message.type, { error }, 'will retry']),
+    )
     return 'retry'
   }
 }

@@ -9,6 +9,8 @@
  */
 
 import type { Env } from '../env'
+import { GitHubError } from '../errors'
+import { fetchWithRetry } from '../util/retry'
 import { getInstallationToken } from './auth'
 
 const GH_API_BASE = 'https://api.github.com'
@@ -16,12 +18,9 @@ const USER_AGENT = 'repolens'
 const API_VERSION = '2022-11-28'
 
 /** Non-retryable failures (4xx apart from 429); message has status only. */
-export class GitHubPullsError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message)
+export class GitHubPullsError extends GitHubError {
+  constructor(status: number, message: string) {
+    super(status, message)
     this.name = 'GitHubPullsError'
   }
 }
@@ -70,7 +69,8 @@ export async function fetchPrMetadata(
   fetchImpl: typeof fetch = fetch,
 ): Promise<PrMetadata> {
   const token = await getInstallationToken(env, installationId, fetchImpl)
-  const response = await fetchImpl(
+  const response = await fetchWithRetry(
+    fetchImpl,
     `${GH_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`,
     { headers: authHeaders(token) },
   )
@@ -141,7 +141,8 @@ export async function fetchPrFiles(
   const files: PrFile[] = []
   const MAX_PAGES = 3
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const response = await fetchImpl(
+    const response = await fetchWithRetry(
+      fetchImpl,
       `${GH_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}/files?per_page=100&page=${page}`,
       { headers: authHeaders(token) },
     )

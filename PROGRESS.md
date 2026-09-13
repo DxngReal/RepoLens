@@ -12,35 +12,89 @@ milestone. "Not run" means it was not run — never fabricate.
       end-to-end install verification pending app registration)
 - [x] Phase 4 — PR Review MVP (code + tests + smoke done; live PR review
       verification pending app registration)
-- [ ] Phase 5 — Reliability & Security   **(current — next)**
-- [ ] Phase 6 — Deployment & Release
+- [x] Phase 5 — Reliability & Security (code + tests + smoke done)
+- [ ] Phase 6 — Deployment & Release   **(current — next)**
 
-Project status: Phases 1–4 complete (2026-09-13). Quality gates passed
+Project status: Phases 1–5 complete (2026-09-13). Quality gates passed
 with evidence below. Live GitHub integration (real install events →
 onboarding issue, real PR → review comment) still requires the manual
 app registration — tracked under Blockers; it gates live verification
-but not Phase 5 implementation work.
+but not Phase 6 implementation work.
 
-## Current phase — Phase 5: Reliability & Security (next)
+## Current phase — Phase 6: Deployment & Release (next)
 
-Milestones (from spec §13, §14, §15):
+Milestones (from spec §15 Phase 6, §18):
 
-- [ ] Retry/backoff on GitHub 429/5xx and LLM 429/5xx (max 3 attempts,
-      exponential backoff), then graceful degradation
-- [ ] Secret redaction before content leaves the Worker (LLM prompts,
-      logs): obvious token/credential patterns
-- [ ] Injection defenses hardening: untrusted content delimiters checked
-      end-to-end (already in prompts); add output fence verification
-- [ ] Error taxonomy: typed error classes per layer with status codes;
-      consistent single-line safe logging
-- [ ] Hardened logging pass: audit every console call for payload/header
-      leakage; request-id correlation without content
-- [ ] Fault tests: retry counts, redaction cases, degrade paths
+- [ ] CI (GitHub Actions): install, biome check, tsc --noEmit, vitest
+      run — no real GitHub/LLM calls
+- [ ] README: setup, privacy section (what is sent to the LLM, how to
+      disable), screenshots placeholders
+- [ ] `wrangler deploy` to a public workers.dev URL (requires Cloudflare
+      account login — manual step owned by the student)
+- [ ] Secrets set via `wrangler secret put` (GH_PRIVATE_KEY,
+      GH_WEBHOOK_SECRET, GEMINI_API_KEY); GH_APP_ID as var
+- [ ] KV namespace: replace local placeholder id with a real namespace
+- [ ] Webhook URL in the GitHub App settings switched from smee.io to
+      the deployed Workers URL
+- [ ] Public install flow verified from a second GitHub account (manual)
+- [ ] End-to-end verification: install → onboarding issue; PR → one
+      review comment; `.repolens.yml` disable paths (manual)
+- [ ] `v0.1.0` tag prepared locally (no push)
 
-Exact next action: audit current retry/degrade behavior (queue retry
-exists; per-call backoff in `auth.ts`/`pulls.ts`/`issues.ts`/`gemini.ts`
-does not), then add a shared retry helper with backoff + redaction
-module + fault tests (mocked fetch only).
+Exact next action: scaffold the GitHub Actions CI workflow (no
+credentials needed), then README setup + privacy sections; deployment
+and live verification steps stop and ask the student for Cloudflare
+login / app registration.
+
+## Completed — Phase 5: Reliability & Security
+
+Milestones (from spec §11, §13, §14, §15):
+
+- [x] Retry/backoff on GitHub 429/5xx and LLM 429/5xx (max 3 attempts,
+      exponential backoff, Retry-After aware), then graceful degradation
+- [x] Secret redaction before content leaves the Worker: `redactSecrets`
+      applied at prompt assembly (title/body/diff) in `provider.ts`
+- [x] Injection defenses hardening: untrusted-content delimiters in
+      prompts (Phase 4) + mechanical output-contract verification
+      (`verifyReviewOutput`: end marker + ordered required headings;
+      violation → deterministic degrade, never posted)
+- [x] Error taxonomy: shared `src/errors.ts` (`GitHubError`, `LLMError`
+      base classes; per-module subclasses across github/llm layers with
+      numeric status), messages status-only
+- [x] Hardened logging pass: every console call audited — fixed safe
+      strings only, no payloads/headers/bodies; `logSafe` helper strips
+      control chars (log-injection defense), caps field length, renders
+      errors as `name + status` only; delivery-id request correlation on
+      webhook route + inline background job logs
+- [x] Fault tests: retry counts/backoff/Retry-After/non-retryable
+      statuses/network errors (16), redaction cases (token formats, PEM,
+      key=value, Authorization, idempotency, no-false-positives), output
+      contract cases (7), logSafe cases (6)
+
+Implementation notes:
+
+- `src/util/retry.ts` — `fetchWithRetry(fetchImpl, url, init, {sleep,
+  maxAttempts})`: retries 429/500/502/503/504 + network errors, base
+  200ms exponential with ±25% jitter, sane Retry-After (≤30s) honored,
+  injectable sleep (tests never wait). Wired into every GitHub call
+  (auth, repos, pulls, issues) and the Gemini adapter.
+- `src/llm/gemini.ts` — 25s AbortSignal timeout per attempt (spec §13:
+  LLM timeout → degrade).
+- `src/analyze/review.ts` — `verifyReviewOutput` gates LLM output before
+  sanitize/post; contract violation degrades exactly like an LLM error.
+- `src/errors.ts` — taxonomy root + `logSafe`; per-module error classes
+  (`GitHubAuthError`, `GitHubApiError`, `GitHubPullsError`,
+  `GitHubIssueError`, `LlmError`) extend the taxonomy via `instanceof`
+  while keeping their specific names.
+
+Smoke evidence (wrangler dev, 2026-09-13):
+
+- unsigned → 401; wrong signature → 401; signed pull_request.opened →
+  200; duplicate delivery id → 200 skipped; healthz → 200.
+- Worker logs verified safe single lines with request-id correlation,
+  e.g. `webhook accepted: pull_request opened <delivery-id>`;
+  `queue: job errored review_job Error will retry` (typed name only, no
+  error text); no payload content anywhere in logs.
 
 ## Completed — Phase 4: PR Review MVP
 
@@ -188,10 +242,10 @@ Notes:
 
 | Check | Result | Notes |
 |---|---|---|
-| vitest | Pass (2026-09-13, Phase 4) | 10 files, 103 tests: HMAC (7), PEM/JWT (5), token cache (4), webhook route (19 incl. queue producer wiring), health (1), manifests (15), repolens-yml (11), onboarding (7), repos/issues helpers (11), review job (9), diff filters/budgets (9), queue consumer (5) |
-| biome check | Pass (2026-09-13, Phase 4) | 32 files, exit 0 |
-| tsc --noEmit | Pass (2026-09-13, Phase 4) | strict, exit 0 |
-| wrangler dev smoke | Pass (2026-09-13, Phase 4) | unsigned pull_request→401; wrong secret→401; signed pull_request.opened→200; duplicate delivery→200 skipped; second signed delivery→200; healthz→200; local queue consumed review_job and retried 3× (no real credentials) then dropped; logs safe single lines only; disposable .dev.vars deleted after |
+| vitest | Pass (2026-09-13, Phase 5) | 11 files, 132 tests: reliability (29: retry 6, redact 6, prompt-redaction 1, gemini retry 3, output contract 7, logSafe 6), plus all Phase 1–4 suites |
+| biome check | Pass (2026-09-13, Phase 5) | 36 files, exit 0 |
+| tsc --noEmit | Pass (2026-09-13, Phase 5) | strict, exit 0 |
+| wrangler dev smoke | Pass (2026-09-13, Phase 5) | unsigned→401; wrong signature→401; signed pull_request.opened→200; duplicate delivery→200 skipped; healthz→200; worker logs verified safe single lines with delivery-id correlation; local queue retried review_job 3× (no real credentials) then dropped |
 | smee webhook loop | Pass (2026-09-13, Phase 1) | end-to-end channel → local worker 200 |
 | CI | Not run | Workflow is added in Phase 6 per spec |
 | Live install events | Not run | Blocked on manual GitHub App registration (spec §6) |
@@ -221,28 +275,21 @@ Notes:
 
 ```text
 Date: 2026-09-13
-Phase: 4 → 5 transition (Phases 1–4 complete)
+Phase: 5 → 6 transition (Phases 1–5 complete)
 Completed this session:
-  - Verified Phase 4 implementation already present in HEAD (pulls.ts,
-    diff.ts, provider.ts, gemini.ts, consumer.ts, review.ts, webhook
-    queue producer) — not re-implemented, only verified against spec §9
-  - Filled PROGRESS.md gap: Phase 4 was coded+committed last session but
-    never marked complete or evidence-logged
+  - Phase 5 completed (see its section above for the full list)
 Evidence (actual command results):
-  - vitest run: 10 files, 103 tests passed
-  - biome check: exit 0 (32 files)
+  - vitest run: 11 files, 132 tests passed
+  - biome check: exit 0 (36 files)
   - tsc --noEmit: exit 0
-  - wrangler dev smoke (signed pull_request): 401 unsigned / 401 wrong
-    secret / 200 signed opened / 200 duplicate skipped / 200 second
-    delivery / 200 healthz; local queue consumed review_job, retried 3×
-    without real credentials then dropped; safe single-line logs;
-    disposable .dev.vars deleted after
-Next exact action: Phase 5 — shared retry/backoff helper for GitHub
-429/5xx + LLM 429/5xx (queue-level retry exists; per-call backoff does
-not), secret redaction before prompts/logs, hardened logging audit,
-fault tests (mocked fetch only).
-Blockers: none for Phase 5 code/tests; live verification needs app
-registration (manual).
+  - wrangler dev smoke: 401 unsigned / 401 wrong signature / 200 signed
+    opened / 200 duplicate skipped / 200 healthz; logs verified safe
+    single lines with delivery-id correlation
+Next exact action: Phase 6 — CI workflow scaffold + README (setup,
+privacy), then deployment steps that need the student (Cloudflare
+login, secrets, app registration webhook URL switch).
+Blockers: deployment + live verification need Cloudflare login and app
+registration (both manual, student-owned).
 ```
 
 ---

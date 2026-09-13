@@ -14,10 +14,23 @@
  */
 
 import type { Env } from '../env'
+import { GitHubError } from '../errors'
+import { fetchWithRetry } from '../util/retry'
 
 const GH_API_BASE = 'https://api.github.com'
 const USER_AGENT = 'repolens'
 const API_VERSION = '2022-11-28'
+
+/**
+ * Non-retryable auth failures; message has status only (spec §13 —
+ * response bodies can echo token material).
+ */
+export class GitHubAuthError extends GitHubError {
+  constructor(status: number, message: string) {
+    super(status, message)
+    this.name = 'GitHubAuthError'
+  }
+}
 
 /** Clock-skew guard applied to the JWT `iat` claim, in seconds. */
 const JWT_IAT_BACKDATE_SECONDS = 60
@@ -121,7 +134,8 @@ export async function getInstallationToken(
   }
 
   const jwt = await createAppJwt(env.GH_APP_ID, env.GH_PRIVATE_KEY)
-  const response = await fetchImpl(
+  const response = await fetchWithRetry(
+    fetchImpl,
     `${GH_API_BASE}/app/installations/${installationId}/access_tokens`,
     {
       method: 'POST',
@@ -136,7 +150,8 @@ export async function getInstallationToken(
   )
   if (!response.ok) {
     // Status only — never the body (could echo token material, spec §13).
-    throw new Error(
+    throw new GitHubAuthError(
+      response.status,
       `installation token request failed with status ${response.status}`,
     )
   }

@@ -25,6 +25,8 @@ import {
   buildReviewSystemPrompt,
   buildReviewUserPrompt,
   type LLMProvider,
+  REVIEW_END_MARKER,
+  REVIEW_REQUIRED_HEADINGS,
 } from '../llm/provider'
 import { buildDiffContext, selectFilesForReview } from './diff'
 
@@ -49,7 +51,27 @@ export type ReviewJobResult = {
 
 /* ---------- output sanitizing ---------- */
 
-const END_MARKER = '---END OF REVIEW---'
+const END_MARKER = REVIEW_END_MARKER
+
+/**
+ * Mechanical output verification (spec §13, output contract): the model
+ * must echo the exact end marker and all required headings, in order.
+ * False → the job degrades to deterministic output; malformed or
+ * injection-influenced output is never posted. Deliberate ceiling
+ * (Ponytail): structure checks only — semantic correctness of review
+ * prose is not verifiable.
+ */
+export function verifyReviewOutput(raw: string): boolean {
+  if (!raw.includes(END_MARKER)) return false
+  const body = raw.slice(0, raw.indexOf(END_MARKER))
+  let cursor = 0
+  for (const heading of REVIEW_REQUIRED_HEADINGS) {
+    const found = body.indexOf(heading, cursor)
+    if (found < 0) return false
+    cursor = found + heading.length
+  }
+  return true
+}
 
 /** Hard cap on the LLM-generated section of the comment. */
 const MAX_REVIEW_SUMMARY_CHARS = 6000
@@ -199,7 +221,8 @@ export async function runReviewJob(
   const diffContext = buildDiffContext(selection)
   let summary: string
   let degraded = false
-  if (deps.provider !== undefined) {
+  const provider = deps.provider
+  if (provider !== undefined) {
     try {
       const prompt = buildReviewUserPrompt({
         prTitle: metadata.title,
@@ -212,9 +235,15 @@ export async function runReviewJob(
         diffContext,
         skippedFiles: selection.skipped.map((s) => s.filename),
       })
-      const raw = await deps.provider.complete(
+      const raw = await provider.complete(
         `${buildReviewSystemPrompt()}\n\n${prompt}`,
       )
+      if (!verifyReviewOutput(raw)) {
+        // Output contract violated → discard entirely, never post
+        // malformed or injection-influenced output (spec §13). The catch
+        // below degrades to the deterministic fallback.
+        throw new Error('review output failed the output contract')
+      }
       summary = sanitizeReviewOutput(raw)
     } catch {
       // Degrade gracefully with an explicit note (spec §11, §13).
@@ -260,7 +289,7 @@ export async function runReviewJob(
       summary,
       degraded,
       skipped: selection.skipped,
-      includeLlmDisclosure: deps.provider !== undefined && !degraded,
+      includeLlmDisclosure: provider !== undefined && !degraded,
     }),
     fetchImpl,
   )

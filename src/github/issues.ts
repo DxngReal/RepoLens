@@ -9,18 +9,17 @@
  */
 
 import type { Env } from '../env'
+import { GitHubError } from '../errors'
+import { fetchWithRetry } from '../util/retry'
 import { getInstallationToken } from './auth'
 
 const GH_API_BASE = 'https://api.github.com'
 const USER_AGENT = 'repolens'
 const API_VERSION = '2022-11-28'
 
-export class GitHubIssueError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message)
+export class GitHubIssueError extends GitHubError {
+  constructor(status: number, message: string) {
+    super(status, message)
     this.name = 'GitHubIssueError'
   }
 }
@@ -48,7 +47,8 @@ async function postJson(
   label: string,
 ): Promise<Record<string, unknown>> {
   const token = await getInstallationToken(env, installationId, fetchImpl)
-  const response = await fetchImpl(
+  const response = await fetchWithRetry(
+    fetchImpl,
     `${GH_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${path}`,
     {
       method: 'POST',

@@ -35,11 +35,14 @@ Queue consumer → job handler                                 [Phase 3–4]
 | `src/analyze/manifests.ts` | Manifest detection + dependency counts | done (Phase 3) |
 | `src/analyze/onboarding.ts` | Deterministic report builder + onboarding job | done (Phase 3) |
 | `src/analyze/diff.ts` | Filters (lockfile/generated/no-patch/too-large), 1500-line budget, exclude globs | done (Phase 4) |
-| `src/analyze/review.ts` | Review job: prompt → LLM → sanitize → one comment | done (Phase 4) |
-| `src/llm/provider.ts` | `LLMProvider` interface + injection-fenced prompts | done (Phase 4) |
-| `src/llm/gemini.ts` | Gemini Flash adapter (status-only errors) | done (Phase 4) |
+| `src/analyze/review.ts` | Review job: prompt → LLM → verify contract → sanitize → one comment | done (Phase 4/5) |
+| `src/llm/provider.ts` | `LLMProvider` interface + injection-fenced prompts + redaction choke point | done (Phase 4/5) |
+| `src/llm/gemini.ts` | Gemini Flash adapter (status-only errors, timeout + retry) | done (Phase 4/5) |
 | `src/queue/consumer.ts` | onboarding_job / review_job handlers, ack/retry/DLQ policy | done (Phase 4) |
 | `src/config/repolens-yml.ts` | `.repolens.yml` parse + validate + defaults | done (Phase 3) |
+| `src/util/retry.ts` | `fetchWithRetry`: 429/5xx + network retry, exponential backoff, Retry-After | done (Phase 5) |
+| `src/util/redact.ts` | `redactSecrets`: token/PEM/key=value/Authorization patterns before LLM egress | done (Phase 5) |
+| `src/errors.ts` | Error taxonomy (`GitHubError`/`LLMError`) + `logSafe` single-line logger | done (Phase 5) |
 
 Phase 4 note: jobs go to `REVIEW_QUEUE` when the binding is present
 (production); without a binding (unit tests, minimal local dev) the same
@@ -60,14 +63,18 @@ never a fake or half review.
 
 ## Status
 
-Phases 1–4 are complete: Hono app, `/healthz`, webhook HMAC verification
+Phases 1–5 are complete: Hono app, `/healthz`, webhook HMAC verification
 (fail-closed 401), KV delivery-id idempotency (24h TTL), RS256 JWT
 signing via WebCrypto, installation token fetching with KV cache,
 `ping`/`installation`/`pull_request` routing, the onboarding pipeline
 (manifest detection, root-tree fetch, `.repolens.yml` config, escaped
 deterministic report, report issue posting), and the PR review pipeline
-(files API → filters/budgets → LLMProvider/Gemini → sanitized single
-`### RepoLens review` comment; deterministic degrade on LLM failure;
-queue producer/consumer with ack/retry/DLQ). Next: Phase 5 — reliability
-& security hardening (backoff, secret redaction, injection defenses,
-error taxonomy).
+(files API → filters/budgets → LLMProvider/Gemini → output-contract
+verification → sanitized single `### RepoLens review` comment;
+deterministic degrade on LLM failure; queue producer/consumer with
+ack/retry/DLQ). Phase 5 added: per-call retry with exponential backoff
+on all GitHub/LLM fetches (429/5xx/network, Retry-After aware), secret
+redaction at the prompt-assembly choke point, a mechanical output-
+contract gate (end marker + required headings) with degrade on
+violation, a shared error taxonomy, and `logSafe` single-line logging
+with delivery-id correlation. Next: Phase 6 — deployment & release.

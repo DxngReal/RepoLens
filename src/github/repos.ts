@@ -9,6 +9,8 @@
  */
 
 import type { Env } from '../env'
+import { GitHubError } from '../errors'
+import { fetchWithRetry } from '../util/retry'
 import { getInstallationToken } from './auth'
 
 const GH_API_BASE = 'https://api.github.com'
@@ -16,12 +18,9 @@ const USER_AGENT = 'repolens'
 const API_VERSION = '2022-11-28'
 
 /** Non-retryable failures (4xx apart from 429); message has status only. */
-export class GitHubApiError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message)
+export class GitHubApiError extends GitHubError {
+  constructor(status: number, message: string) {
+    super(status, message)
     this.name = 'GitHubApiError'
   }
 }
@@ -71,7 +70,8 @@ export async function fetchRepoMetadata(
   fetchImpl: typeof fetch = fetch,
 ): Promise<RepoMetadata> {
   const token = await getInstallationToken(env, installationId, fetchImpl)
-  const response = await fetchImpl(
+  const response = await fetchWithRetry(
+    fetchImpl,
     `${GH_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
     { headers: authHeaders(token) },
   )
@@ -123,7 +123,8 @@ export async function fetchRootTree(
   fetchImpl: typeof fetch = fetch,
 ): Promise<RootTree> {
   const token = await getInstallationToken(env, installationId, fetchImpl)
-  const response = await fetchImpl(
+  const response = await fetchWithRetry(
+    fetchImpl,
     `${GH_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(ref)}?recursive=0`,
     { headers: authHeaders(token) },
   )
@@ -192,7 +193,9 @@ export async function fetchFileContents(
       .join('/')}?ref=${encodeURIComponent(ref)}`
     let response: Response
     try {
-      response = await fetchImpl(url, { headers: authHeaders(token) })
+      response = await fetchWithRetry(fetchImpl, url, {
+        headers: authHeaders(token),
+      })
     } catch {
       // Network-level failure: skip this file, keep going (spec §13).
       oversizedPaths.push(path)

@@ -2,6 +2,7 @@ import { waitUntil } from 'cloudflare:workers'
 import { runOnboardingJob } from '../analyze/onboarding'
 import { runReviewJob } from '../analyze/review'
 import type { Env } from '../env'
+import { logSafe } from '../errors'
 import { verifyWebhookSignature } from '../github/verify'
 import { buildReviewProvider, type QueueMessage } from '../queue/consumer'
 
@@ -135,6 +136,7 @@ function executeInline(
   env: Env,
   message: QueueMessage,
   options: WebhookOptions,
+  requestId: string,
 ): void {
   const schedule = options.waitUntilImpl ?? waitUntil
   const fetchImpl = options.fetchImpl ?? fetch
@@ -149,17 +151,37 @@ function executeInline(
     work
       .then((result) => {
         if (result.status === 'posted') {
-          console.log(`background job finished: ${message.type} posted`)
+          console.log(
+            logSafe([
+              requestId,
+              'background job finished:',
+              message.type,
+              'posted',
+            ]),
+          )
         } else {
           console.log(
-            `background job finished: ${message.type} skipped (${result.reason ?? 'unknown'})`,
+            logSafe([
+              requestId,
+              'background job finished:',
+              message.type,
+              'skipped',
+              result.reason ?? 'unknown',
+            ]),
           )
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // One safe line; error text could carry untrusted content
-        // (spec §13), so details stay out of the log.
-        console.log(`background job errored: ${message.type}`)
+        // (spec §13), so only the typed name + status are logged.
+        console.log(
+          logSafe([
+            requestId,
+            'background job errored:',
+            message.type,
+            { error },
+          ]),
+        )
       }),
   )
 }
@@ -168,6 +190,7 @@ function executeInline(
 function makeEnqueue(
   env: Env,
   options: WebhookOptions,
+  requestId: string,
 ): (message: QueueMessage) => Promise<void> {
   if (options.enqueueImpl !== undefined) {
     return options.enqueueImpl
@@ -179,13 +202,13 @@ function makeEnqueue(
         await queue.send(message)
       } catch {
         // Queue unavailable → degrade to inline execution (spec §13).
-        console.log('queue send failed: running job inline')
-        executeInline(env, message, options)
+        console.log(logSafe(['queue send failed: running job inline']))
+        executeInline(env, message, options, requestId)
       }
     }
   }
   return async (message) => {
-    executeInline(env, message, options)
+    executeInline(env, message, options, requestId)
   }
 }
 
@@ -197,6 +220,9 @@ export async function handleWebhook(
   const rawBody = await request.text()
   const signature = request.headers.get('x-hub-signature-256')
   const eventName = request.headers.get('x-github-event')
+  // Request-id correlation (spec §13: hardened logging): only the UUID
+  // delivery id is logged, never payload or header contents.
+  const requestId = request.headers.get('x-github-delivery') ?? 'none'
 
   const valid = await verifyWebhookSignature(
     rawBody,
@@ -204,13 +230,13 @@ export async function handleWebhook(
     env.GH_WEBHOOK_SECRET,
   )
   if (!valid) {
-    console.log('webhook rejected: invalid signature')
+    console.log(logSafe(['webhook rejected: invalid signature', requestId]))
     return new Response(null, { status: 401 })
   }
 
   const deliveryId = request.headers.get('x-github-delivery')
   if (!deliveryId) {
-    console.log('webhook rejected: missing delivery id')
+    console.log(logSafe(['webhook rejected: missing delivery id']))
     return new Response(null, { status: 400 })
   }
 
@@ -218,7 +244,7 @@ export async function handleWebhook(
   const dedupeKey = `delivery:${deliveryId}`
   const seen = await env.IDEMPOTENCY_KV.get(dedupeKey)
   if (seen !== null) {
-    console.log('webhook skipped: duplicate delivery')
+    console.log(logSafe(['webhook skipped: duplicate delivery', requestId]))
     return new Response(null, { status: 200 })
   }
   await env.IDEMPOTENCY_KV.put(dedupeKey, '1', {
@@ -226,11 +252,11 @@ export async function handleWebhook(
   })
 
   if (eventName === 'ping') {
-    console.log('webhook accepted: ping')
+    console.log(logSafe(['webhook accepted: ping', requestId]))
     return new Response(null, { status: 200 })
   }
 
-  const enqueue = makeEnqueue(env, options)
+  const enqueue = makeEnqueue(env, options, requestId)
 
   if (eventName === 'installation') {
     const payload = parseInstallationPayload(rawBody)
@@ -248,7 +274,12 @@ export async function handleWebhook(
         }),
       )
       console.log(
-        `webhook accepted: installation created (${jobs.length} repo${jobs.length === 1 ? '' : 's'})`,
+        logSafe([
+          'webhook accepted: installation created',
+          jobs.length,
+          'repo(s)',
+          requestId,
+        ]),
       )
       for (const job of jobs) {
         await enqueue(job)
@@ -271,7 +302,9 @@ export async function handleWebhook(
       payload.owner !== null &&
       payload.repo !== null
     ) {
-      console.log(`webhook accepted: pull_request ${payload.action}`)
+      console.log(
+        logSafe(['webhook accepted: pull_request', payload.action, requestId]),
+      )
       await enqueue({
         type: 'review_job',
         installationId: payload.installationId,
