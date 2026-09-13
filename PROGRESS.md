@@ -13,15 +13,15 @@ milestone. "Not run" means it was not run — never fabricate.
 - [x] Phase 4 — PR Review MVP (code + tests + smoke done; live PR review
       verification pending app registration)
 - [x] Phase 5 — Reliability & Security (code + tests + smoke done)
-- [ ] Phase 6 — Deployment & Release   **(current — next)**
+- [ ] Phase 6 — Deployment & Release   **(current — agent-side work complete; manual deploy steps pending — see docs/DEPLOYMENT.md)**
 
-Project status: Phases 1–5 complete (2026-09-13). Quality gates passed
-with evidence below. Live GitHub integration (real install events →
+Project status: Phases 1–5 complete (2026-09-13); Phase 6 agent-side work complete (2026-09-13). Quality gates passed
+with evidence below. Remaining Phase 6 items are all manual student steps (docs/DEPLOYMENT.md). Live GitHub integration (real install events →
 onboarding issue, real PR → review comment) still requires the manual
 app registration — tracked under Blockers; it gates live verification
 but not Phase 6 implementation work.
 
-## Current phase — Phase 6: Deployment & Release (next)
+## Current phase — Phase 6: Deployment & Release (agent-side done)
 
 Milestones (from spec §15 Phase 6, §18):
 
@@ -42,14 +42,26 @@ Milestones (from spec §15 Phase 6, §18):
 - [ ] Public install flow verified from a second GitHub account (manual)
 - [ ] End-to-end verification: install → onboarding issue; PR → one
       review comment; `.repolens.yml` disable paths (manual)
-- [ ] `v0.1.0` tag prepared locally (no push)
+- [ ] `v0.1.0` tag prepared locally (no push; after live verification)
 
-Exact next action: DEPLOYMENT BLOCK — the remaining Phase 6 steps need
-the student: (1) Cloudflare login + `wrangler deploy`, (2) real KV
-namespace id in wrangler.jsonc, (3) `wrangler secret put` × 3,
-(4) GitHub App registration + webhook URL switch to the Workers URL,
-(5) install + end-to-end verification from a second account. Provide
-credentials/steps when ready; nothing else is blocking.
+Agent-side milestones completed this session (2026-09-13):
+
+- [x] `wrangler deploy --dry-run --outdir=dist` pre-flight: bundle
+      builds (129.25 KiB / gzip 31.97 KiB), all bindings resolve
+      (KV, queue, GH_APP_ID var). Note: real deploy will fail until
+      the placeholder KV id is replaced — first item in the runbook.
+- [x] README screenshots placeholders added (spec §15 Phase 6:
+      "README with setup + privacy + screenshots placeholders")
+- [x] `docs/DEPLOYMENT.md` — student-owned runbook: Cloudflare login,
+      KV namespace + queue creation, deploy, smoke curls, secret put
+      ×3 + GH_APP_ID var, app registration (webhook URL → Workers
+      URL), end-to-end verification incl. `.repolens.yml` disable
+      paths, release prep, troubleshooting
+
+Exact next action: student performs `docs/DEPLOYMENT.md` steps 1–8.
+Report back the deployed Workers URL + any command output issues;
+then the agent assists with live verification and the v0.1.0 tag.
+Nothing else is blocking.
 
 ## Completed — Phase 5: Reliability & Security
 
@@ -253,6 +265,11 @@ Notes:
 | wrangler dev smoke | Pass (2026-09-13, Phase 5) | unsigned→401; wrong signature→401; signed pull_request.opened→200; duplicate delivery→200 skipped; healthz→200; worker logs verified safe single lines with delivery-id correlation; local queue retried review_job 3× (no real credentials) then dropped |
 | smee webhook loop | Pass (2026-09-13, Phase 1) | end-to-end channel → local worker 200 |
 | CI | Not run | Workflow added (`.github/workflows/ci.yml`); runs after the repo is pushed to GitHub — student-owned step |
+| vitest (Phase 6 pre-deploy) | Pass (2026-09-13) | 11 files, 132 tests — re-run this session, no code changes since Phase 5 |
+| biome check (Phase 6 pre-deploy) | Pass (2026-09-13) | 36 files, exit 0 — re-run this session |
+| tsc --noEmit (Phase 6 pre-deploy) | Pass (2026-09-13) | strict, exit 0 — re-run this session |
+| wrangler deploy --dry-run | Pass (2026-09-13) | 129.25 KiB bundle, bindings resolve; real deploy deferred to student (login + real KV id) |
+| wrangler dev smoke (Phase 6) | Not run | No worker code changed since the Phase 5 smoke (2026-09-13); docs/CI/README only — Phase 5 evidence stands |
 | Live install events | Not run | Blocked on manual GitHub App registration (spec §6) |
 
 ## Decisions log
@@ -280,10 +297,10 @@ Notes:
 
 ```text
 Date: 2026-09-13
-Phase: 5 → 6 transition (Phases 1–5 complete)
+Phase: 6 (agent-side complete; manual deploy + live verification pending)
 Completed this session:
   - Phase 5 completed (see its section above for the full list)
-  - Phase 6 partial: CI workflow + README privacy/setup/config
+  - Phase 6 agent-side: CI, README (+ screenshots placeholders), deploy dry-run pre-flight, docs/DEPLOYMENT.md runbook
 Evidence (actual command results):
   - vitest run: 11 files, 132 tests passed
   - biome check: exit 0 (36 files)
@@ -292,9 +309,11 @@ Evidence (actual command results):
     opened / 200 duplicate skipped / 200 healthz; logs verified safe
     single lines with delivery-id correlation
   - CI workflow: added, not yet run (needs repo push — student-owned)
-Next exact action: Phase 6 — CI workflow scaffold + README (setup,
-privacy), then deployment steps that need the student (Cloudflare
-login, secrets, app registration webhook URL switch).
+  - wrangler deploy --dry-run: bundle 129.25 KiB / gzip 31.97 KiB, bindings resolve
+  - re-run this session: vitest 132 pass / biome 36 files / tsc exit 0
+Next exact action: student performs docs/DEPLOYMENT.md steps 1–8;
+report back the deployed Workers URL; then live verification + v0.1.0 tag.
+Manual steps remaining: Cloudflare login, secrets, app registration webhook URL switch.
 Blockers: deployment + live verification need Cloudflare login and app
 registration (both manual, student-owned).
 ```

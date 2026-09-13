@@ -95,6 +95,12 @@ one-line note in the bot output (never a crash).
   issue text are never treated as instructions, and prompt-injection
   attempts in diffs do not change behavior.
 
+## Screenshots
+
+<!-- v0.1.0: add two screenshots after live verification --
+     1. an onboarding report issue on a demo repo
+     2. a `### RepoLens review` comment on a PR -->
+
 ## Development checks
 
 ```bash
