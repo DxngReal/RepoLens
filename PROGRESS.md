@@ -32,11 +32,11 @@ Milestones (from spec §15 Phase 6, §18):
 - [x] README: setup, privacy section (what is sent to the LLM, what is
       never sent, deterministic mode, retention), config schema,
       reliability summary
-- [ ] `wrangler deploy` to a public workers.dev URL (requires Cloudflare
-      account login — manual step owned by the student)
+- [x] `wrangler deploy` to a public workers.dev URL — deployed 2026-09-13
+      to https://repolens.dxngreal.workers.dev (smoke: healthz 200, unsigned webhook 401)
 - [ ] Secrets set via `wrangler secret put` (GH_PRIVATE_KEY,
       GH_WEBHOOK_SECRET, GEMINI_API_KEY); GH_APP_ID as var
-- [ ] KV namespace: replace local placeholder id with a real namespace
+- [x] KV namespace: replace local placeholder id with a real namespace
 - [ ] Webhook URL in the GitHub App settings switched from smee.io to
       the deployed Workers URL
 - [ ] Public install flow verified from a second GitHub account (manual)
@@ -49,7 +49,7 @@ Agent-side milestones completed this session (2026-09-13):
 - [x] `wrangler deploy --dry-run --outdir=dist` pre-flight: bundle
       builds (129.25 KiB / gzip 31.97 KiB), all bindings resolve
       (KV, queue, GH_APP_ID var). Note: real deploy will fail until
-      the placeholder KV id is replaced — first item in the runbook.
+      Note: deploy + KV steps are DONE (see validation log); runbook steps 1–4 complete.
 - [x] README screenshots placeholders added (spec §15 Phase 6:
       "README with setup + privacy + screenshots placeholders")
 - [x] `docs/DEPLOYMENT.md` — student-owned runbook: Cloudflare login,
@@ -58,10 +58,10 @@ Agent-side milestones completed this session (2026-09-13):
       URL), end-to-end verification incl. `.repolens.yml` disable
       paths, release prep, troubleshooting
 
-Exact next action: student performs `docs/DEPLOYMENT.md` steps 1–8.
-Report back the deployed Workers URL + any command output issues;
-then the agent assists with live verification and the v0.1.0 tag.
-Nothing else is blocking.
+Exact next action: student sets the three secrets (runbook step 5) and
+GH_APP_ID var, then registers the GitHub App with the webhook pointed at
+the Workers URL (runbook step 6). Live verification follows. Nothing
+else is blocking.
 
 ## Completed — Phase 5: Reliability & Security
 
@@ -270,6 +270,7 @@ Notes:
 | tsc --noEmit (Phase 6 pre-deploy) | Pass (2026-09-13) | strict, exit 0 — re-run this session |
 | wrangler deploy --dry-run | Pass (2026-09-13) | 129.25 KiB bundle, bindings resolve; real deploy deferred to student (login + real KV id) |
 | wrangler dev smoke (Phase 6) | Not run | No worker code changed since the Phase 5 smoke (2026-09-13); docs/CI/README only — Phase 5 evidence stands |
+| wrangler deploy (real) | Pass (2026-09-13) | https://repolens.dxngreal.workers.dev — bundle 129.25 KiB, startup 1ms; smoke: healthz 200, unsigned webhook 401 (verified by agent via curl) |
 | Live install events | Not run | Blocked on manual GitHub App registration (spec §6) |
 
 ## Decisions log
