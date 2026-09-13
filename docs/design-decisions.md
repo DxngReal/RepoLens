@@ -23,14 +23,19 @@ behind each new dependency.
 Every dependency gets a one-line justification (spec §4):
 
 - `hono` — HTTP router with native Workers support (no Node polyfills needed).
-- `@octokit/app`, `@octokit/webhooks`, `octokit` — GitHub App auth (JWT →
-  installation tokens) and webhook primitives without the Probot runtime.
+- `@octokit/app`, `@octokit/auth-app`, `octokit` — GitHub App auth and API
+  primitives for later phases (JWT/installation mechanics currently
+  hand-rolled in `src/github/auth.ts` for Workers-native control).
 - `wrangler` — Cloudflare dev/deploy toolchain.
-- `@cloudflare/vitest-pool-workers` + `@cloudflare/workers-types` — run
-  tests inside workerd against real bindings semantics.
-- `vitest` — test runner required by the workers pool.
+- `@cloudflare/vitest-plugin` + `@cloudflare/workers-types` — run tests
+  inside workerd against real bindings semantics. NOTE:
+  `@cloudflare/vitest-pool-workers`, named in the original spec, was
+  renamed/upgraded by Cloudflare to `@cloudflare/vitest-plugin`
+  (Vitest 4+ API); same capability, official successor.
+- `vitest` — test runner required by the workers plugin.
 - `typescript` — strict type checking (`tsc --noEmit`).
 - `@biomejs/biome` — lint + format in one fast tool.
+- `smee-client` (dev) — verifiable local webhook forwarding loop.
 
 ## Deliberate exclusions
 
@@ -44,3 +49,9 @@ Every dependency gets a one-line justification (spec §4):
 - `wrangler.jsonc` KV namespace id is a local placeholder until the real
   namespace is created in Phase 6; tests use local miniflare bindings.
 - Queue consumer wiring lands in Phase 4 with `src/queue/consumer.ts`.
+- HMAC verification and JWT signing are hand-rolled on WebCrypto rather
+  than pulled from `@octokit/webhooks`: a small, fully-controlled,
+  fail-closed surface that runs natively in Workers; Octokit packages
+  remain available for repo/issue/PR API work in Phases 3–4.
+- `src/github/auth.ts` accepts an injectable `fetchImpl` so tests mock
+  all GitHub API calls (hard rule: no real API calls in tests/CI).
