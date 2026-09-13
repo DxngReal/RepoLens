@@ -1,0 +1,40 @@
+/**
+ * RepoLens Wrangler configuration (spec §5, §6).
+ *
+ * The KV namespace id below is a local-dev placeholder. Before deploying
+ * (Phase 6) the student creates the real namespace and records its id:
+ *
+ *   wrangler kv namespace create IDEMPOTENCY_KV
+ *
+ * Secrets (GH_PRIVATE_KEY, GH_WEBHOOK_SECRET, GEMINI_API_KEY) are never
+ * written here — they are Wrangler secrets / .dev.vars only (spec §6).
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "repolens",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    // Numeric GitHub App id; filled after manual app registration (spec §6).
+    "GH_APP_ID": ""
+  },
+  "kv_namespaces": [
+    {
+      "binding": "IDEMPOTENCY_KV",
+      "id": "placeholder_local_dev_only"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "REVIEW_QUEUE",
+        "queue": "repolens-jobs"
+      }
+    ]
+    // Queue consumer wiring (consumer block + worker `queue` handler) is
+    // added in Phase 4 together with src/queue/consumer.ts.
+  }
+}

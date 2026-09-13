@@ -1,0 +1,13 @@
+# RepoLens local dev secrets template.
+#
+# Copy this file to `.dev.vars` and fill in real values. `.dev.vars` is
+# git-ignored. All values come from the manual GitHub App registration
+# (docs/MASTER_BUILD_PROMPT.md §6) and Google AI Studio — never invent them.
+#
+# GH_APP_ID is a plain var in wrangler.jsonc (not secret); the three values
+# below are Wrangler secrets in production (wrangler secret put <NAME>).
+
+GH_APP_ID=
+GH_PRIVATE_KEY=
+GH_WEBHOOK_SECRET=
+GEMINI_API_KEY=

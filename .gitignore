@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Local dev secrets — NEVER commit (spec: secrets only via Wrangler/.dev.vars)
+.dev.vars
+*.pem
+
+# Wrangler local state
+.wrangler/
+
+# Build/test output
+dist/
+coverage/
+
+# OS/editor noise
+.DS_Store
+*.log

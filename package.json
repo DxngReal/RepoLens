@@ -1,0 +1,32 @@
+{
+  "name": "repolens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "GitHub App that posts onboarding reports and PR summary comments. Deterministic analysis first, optional LLM summary second.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.13",
+    "@cloudflare/vitest-plugin": "^1.1.8",
+    "@cloudflare/workers-types": "^5.20260911.1",
+    "smee-client": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.131.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260815.1": true,
+    "workerd@1.20260911.1": true
+  },
+  "dependencies": {
+    "hono": "^4.13.7"
+  }
+}
