@@ -25,10 +25,13 @@ but not Phase 6 implementation work.
 
 Milestones (from spec §15 Phase 6, §18):
 
-- [ ] CI (GitHub Actions): install, biome check, tsc --noEmit, vitest
-      run — no real GitHub/LLM calls
-- [ ] README: setup, privacy section (what is sent to the LLM, how to
-      disable), screenshots placeholders
+- [x] CI (GitHub Actions): install, biome check, tsc --noEmit, vitest
+      run — no real GitHub/LLM calls (`.github/workflows/ci.yml` added;
+      workflow itself can only be verified green after push — requires
+      the student to push/create the repo remote)
+- [x] README: setup, privacy section (what is sent to the LLM, what is
+      never sent, deterministic mode, retention), config schema,
+      reliability summary
 - [ ] `wrangler deploy` to a public workers.dev URL (requires Cloudflare
       account login — manual step owned by the student)
 - [ ] Secrets set via `wrangler secret put` (GH_PRIVATE_KEY,
@@ -41,10 +44,12 @@ Milestones (from spec §15 Phase 6, §18):
       review comment; `.repolens.yml` disable paths (manual)
 - [ ] `v0.1.0` tag prepared locally (no push)
 
-Exact next action: scaffold the GitHub Actions CI workflow (no
-credentials needed), then README setup + privacy sections; deployment
-and live verification steps stop and ask the student for Cloudflare
-login / app registration.
+Exact next action: DEPLOYMENT BLOCK — the remaining Phase 6 steps need
+the student: (1) Cloudflare login + `wrangler deploy`, (2) real KV
+namespace id in wrangler.jsonc, (3) `wrangler secret put` × 3,
+(4) GitHub App registration + webhook URL switch to the Workers URL,
+(5) install + end-to-end verification from a second account. Provide
+credentials/steps when ready; nothing else is blocking.
 
 ## Completed — Phase 5: Reliability & Security
 
@@ -247,7 +252,7 @@ Notes:
 | tsc --noEmit | Pass (2026-09-13, Phase 5) | strict, exit 0 |
 | wrangler dev smoke | Pass (2026-09-13, Phase 5) | unsigned→401; wrong signature→401; signed pull_request.opened→200; duplicate delivery→200 skipped; healthz→200; worker logs verified safe single lines with delivery-id correlation; local queue retried review_job 3× (no real credentials) then dropped |
 | smee webhook loop | Pass (2026-09-13, Phase 1) | end-to-end channel → local worker 200 |
-| CI | Not run | Workflow is added in Phase 6 per spec |
+| CI | Not run | Workflow added (`.github/workflows/ci.yml`); runs after the repo is pushed to GitHub — student-owned step |
 | Live install events | Not run | Blocked on manual GitHub App registration (spec §6) |
 
 ## Decisions log
@@ -278,6 +283,7 @@ Date: 2026-09-13
 Phase: 5 → 6 transition (Phases 1–5 complete)
 Completed this session:
   - Phase 5 completed (see its section above for the full list)
+  - Phase 6 partial: CI workflow + README privacy/setup/config
 Evidence (actual command results):
   - vitest run: 11 files, 132 tests passed
   - biome check: exit 0 (36 files)
@@ -285,6 +291,7 @@ Evidence (actual command results):
   - wrangler dev smoke: 401 unsigned / 401 wrong signature / 200 signed
     opened / 200 duplicate skipped / 200 healthz; logs verified safe
     single lines with delivery-id correlation
+  - CI workflow: added, not yet run (needs repo push — student-owned)
 Next exact action: Phase 6 — CI workflow scaffold + README (setup,
 privacy), then deployment steps that need the student (Cloudflare
 login, secrets, app registration webhook URL switch).
