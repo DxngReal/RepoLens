@@ -1,10 +1,9 @@
 /**
  * RepoLens Wrangler configuration (spec §5, §6).
  *
- * The KV namespace id below is a local-dev placeholder. Before deploying
- * (Phase 6) the student creates the real namespace and records its id:
- *
- *   wrangler kv namespace create IDEMPOTENCY_KV
+ * KV namespace created 2026-09-13: `wrangler kv namespace create
+ * IDEMPOTENCY_KV` (namespace ids are account-scoped resource ids, not
+ * secrets).
  *
  * Secrets (GH_PRIVATE_KEY, GH_WEBHOOK_SECRET, GEMINI_API_KEY) are never
  * written here — they are Wrangler secrets / .dev.vars only (spec §6).
@@ -24,7 +23,7 @@
   "kv_namespaces": [
     {
       "binding": "IDEMPOTENCY_KV",
-      "id": "placeholder_local_dev_only"
+      "id": "95a72e9f8e804fa8922d3a91523818db"
     }
   ],
   "queues": {
