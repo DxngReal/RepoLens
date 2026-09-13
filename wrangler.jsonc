@@ -33,8 +33,15 @@
         "binding": "REVIEW_QUEUE",
         "queue": "repolens-jobs"
       }
+    ],
+    "consumers": [
+      {
+        "queue": "repolens-jobs",
+        "max_batch_size": 5,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "repolens-jobs-dlq"
+      }
     ]
-    // Queue consumer wiring (consumer block + worker `queue` handler) is
-    // added in Phase 4 together with src/queue/consumer.ts.
   }
 }

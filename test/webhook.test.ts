@@ -296,7 +296,28 @@ describe('POST /webhook — event routing', () => {
   })
 })
 
-describe('POST /webhook — installation.created onboarding wiring', () => {
+describe('POST /webhook — job producer wiring (queue or inline fallback)', () => {
+  /** Env without a queue binding → jobs run inline via waitUntil. */
+  function envWithoutQueue(envOverride: Env): Env {
+    return {
+      ...(envOverride as object),
+      REVIEW_QUEUE: undefined,
+    } as unknown as Env
+  }
+
+  /** Captures queue sends (the producer path under test). */
+  function captureEnqueue(): {
+    sent: unknown[]
+    enqueueImpl: (m: unknown) => Promise<void>
+  } {
+    const sent: unknown[] = []
+    return {
+      sent,
+      enqueueImpl: async (message) => {
+        sent.push(message)
+      },
+    }
+  }
   /** Captures background jobs instead of running them. */
   function captureWaitUntil(): {
     jobs: Promise<unknown>[]
@@ -322,7 +343,40 @@ describe('POST /webhook — installation.created onboarding wiring', () => {
     })
   }
 
-  it('schedules one onboarding job per repository', async () => {
+  it('enqueues one onboarding job per repository', async () => {
+    const captured = captureEnqueue()
+    const body = installationBody()
+    const signature = await signedPayload(body)
+    const res = await handleWebhook(
+      webhookRequest({
+        body,
+        signature,
+        event: 'installation',
+        delivery: 'onboard-1',
+      }),
+      testEnv(),
+      { enqueueImpl: captured.enqueueImpl },
+    )
+    expect(res.status).toBe(200)
+    expect(captured.sent).toHaveLength(2)
+    expect(captured.sent).toEqual([
+      {
+        type: 'onboarding_job',
+        installationId: 55,
+        owner: 'octo',
+        repo: 'alpha',
+      },
+      {
+        type: 'onboarding_job',
+        installationId: 55,
+        owner: 'octo',
+        repo: 'beta',
+      },
+    ])
+    await kv.delete('delivery:onboard-1')
+  })
+
+  it('falls back to inline execution when no queue binding exists', async () => {
     const captured = captureWaitUntil()
     const calls: string[] = []
     // Serves the token exchange and repo metadata, records everything,
@@ -357,13 +411,15 @@ describe('POST /webhook — installation.created onboarding wiring', () => {
     const signature = await signedPayload(body)
     // A real test key: the background job must get past JWT signing to
     // reach the (mocked) GitHub fetch.
-    const jobEnv = envWithPrivateKey(await generateTestPrivateKeyPem())
+    const jobEnv = envWithoutQueue(
+      envWithPrivateKey(await generateTestPrivateKeyPem()),
+    )
     const res = await handleWebhook(
       webhookRequest({
         body,
         signature,
         event: 'installation',
-        delivery: 'onboard-1',
+        delivery: 'onboard-1b',
       }),
       jobEnv,
       { fetchImpl, waitUntilImpl: (p) => void captured.jobs.push(p) },
@@ -374,7 +430,7 @@ describe('POST /webhook — installation.created onboarding wiring', () => {
     await captured.runAll()
     expect(calls.some((url) => url.includes('/repos/octo/alpha'))).toBe(true)
     expect(calls.some((url) => url.includes('/repos/octo/beta'))).toBe(true)
-    await kv.delete('delivery:onboard-1')
+    await kv.delete('delivery:onboard-1b')
   })
 
   it('swallows background onboarding failures (response stays 200)', async () => {
@@ -392,7 +448,7 @@ describe('POST /webhook — installation.created onboarding wiring', () => {
         event: 'installation',
         delivery: 'onboard-2',
       }),
-      testEnv(),
+      envWithoutQueue(envWithPrivateKey(await generateTestPrivateKeyPem())),
       { fetchImpl, waitUntilImpl: (p) => void captured.jobs.push(p) },
     )
     expect(res.status).toBe(200)
@@ -439,6 +495,83 @@ describe('POST /webhook — installation.created onboarding wiring', () => {
     expect(res.status).toBe(200)
     expect(captured.jobs).toHaveLength(0)
     await kv.delete('delivery:onboard-4')
+  })
+
+  it('enqueues one review job for pull_request opened', async () => {
+    const captured = captureEnqueue()
+    const body = JSON.stringify({
+      action: 'opened',
+      installation: { id: 55 },
+      pull_request: { number: 7 },
+      repository: { name: 'alpha', owner: { login: 'octo' } },
+    })
+    const signature = await signedPayload(body)
+    const res = await handleWebhook(
+      webhookRequest({
+        body,
+        signature,
+        event: 'pull_request',
+        delivery: 'pr-1',
+      }),
+      testEnv(),
+      { enqueueImpl: captured.enqueueImpl },
+    )
+    expect(res.status).toBe(200)
+    expect(captured.sent).toEqual([
+      {
+        type: 'review_job',
+        installationId: 55,
+        owner: 'octo',
+        repo: 'alpha',
+        number: 7,
+      },
+    ])
+    await kv.delete('delivery:pr-1')
+  })
+
+  it('enqueues a review job for synchronize and ignores other PR actions', async () => {
+    const captured = captureEnqueue()
+    const synchronizeBody = JSON.stringify({
+      action: 'synchronize',
+      installation: { id: 55 },
+      pull_request: { number: 7 },
+      repository: { name: 'alpha', owner: { login: 'octo' } },
+    })
+    const signature = await signedPayload(synchronizeBody)
+    const res = await handleWebhook(
+      webhookRequest({
+        body: synchronizeBody,
+        signature,
+        event: 'pull_request',
+        delivery: 'pr-2',
+      }),
+      testEnv(),
+      { enqueueImpl: captured.enqueueImpl },
+    )
+    expect(res.status).toBe(200)
+    expect(captured.sent).toHaveLength(1)
+
+    // Closed/other actions → no job.
+    const closedBody = JSON.stringify({
+      action: 'closed',
+      installation: { id: 55 },
+      pull_request: { number: 7 },
+      repository: { name: 'alpha', owner: { login: 'octo' } },
+    })
+    const res2 = await handleWebhook(
+      webhookRequest({
+        body: closedBody,
+        signature: await signedPayload(closedBody),
+        event: 'pull_request',
+        delivery: 'pr-3',
+      }),
+      testEnv(),
+      { enqueueImpl: captured.enqueueImpl },
+    )
+    expect(res2.status).toBe(200)
+    expect(captured.sent).toHaveLength(1) // unchanged
+    await kv.delete('delivery:pr-2')
+    await kv.delete('delivery:pr-3')
   })
 })
 

@@ -1,23 +1,25 @@
 import { waitUntil } from 'cloudflare:workers'
 import { runOnboardingJob } from '../analyze/onboarding'
+import { runReviewJob } from '../analyze/review'
 import type { Env } from '../env'
 import { verifyWebhookSignature } from '../github/verify'
+import { buildReviewProvider, type QueueMessage } from '../queue/consumer'
 
 /**
- * POST /webhook (spec §5, §7, §13):
+ * POST /webhook (spec §5, §7, §13, §14):
  *
  *   1. Verify X-Hub-Signature-256 → 401 on missing/invalid (fail closed)
  *   2. Delivery-id dedupe via KV (duplicate → 200, skip)
  *   3. Mark delivery id (TTL 24h)
- *   4. Route: ping → 200; installation created → onboarding jobs run in
- *      the background (inline waitUntil until the Phase 4 queue);
- *      installation deleted → 200; unknown events → 200 ignored.
+ *   4. Enqueue jobs, then 200:
+ *      - installation.created → one onboarding_job per accessible repo
+ *      - pull_request opened/synchronize → one review_job
  *
  * The webhook handler performs no GitHub/LLM calls before responding
- * (spec §14) — background work is scheduled via `waitUntil` after the
- * response is prepared. Logs are single safe lines: allow-listed action
- * words only, never payload contents or header echoes (spec §7, §13).
- * Onboarding failures log one safe line and never affect the response.
+ * (spec §14). Jobs go to REVIEW_QUEUE; when no queue binding is bound
+ * (unit tests, minimal local dev), jobs run inline via `waitUntil` so
+ * behavior is preserved. Logs are single safe lines: allow-listed words
+ * only, never payload contents or header echoes (spec §7, §13).
  */
 
 const DELIVERY_TTL_SECONDS = 24 * 60 * 60
@@ -50,24 +52,141 @@ function parseInstallationPayload(rawBody: string): {
   if (Array.isArray(reposRaw)) {
     repositories = reposRaw.flatMap((entry) => {
       if (entry === null || typeof entry !== 'object') return []
-      const repo = entry as Record<string, unknown>
-      if (typeof repo.name !== 'string' || typeof repo.full_name !== 'string') {
+      const repoEntry = entry as Record<string, unknown>
+      if (
+        typeof repoEntry.name !== 'string' ||
+        typeof repoEntry.full_name !== 'string'
+      ) {
         return []
       }
-      const owner = repo.full_name.includes('/')
-        ? repo.full_name.slice(0, repo.full_name.indexOf('/'))
+      const owner = repoEntry.full_name.includes('/')
+        ? repoEntry.full_name.slice(0, repoEntry.full_name.indexOf('/'))
         : ''
       if (owner.length === 0) return []
-      return [{ owner, repo: repo.name }]
+      return [{ owner, repo: repoEntry.name }]
     })
   }
   return { action, installationId, repositories }
 }
 
-/** Injectables for tests: mock fetch and capture background work. */
+/** Extracts safe, allow-listed fields from a pull_request payload. */
+function parsePullRequestPayload(rawBody: string): {
+  action: string
+  installationId: number | null
+  number: number | null
+  owner: string | null
+  repo: string | null
+} | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawBody)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object') return null
+  const record = parsed as Record<string, unknown>
+
+  const action = typeof record.action === 'string' ? record.action : ''
+
+  const installation = record.installation
+  const installationId =
+    installation !== null &&
+    typeof installation === 'object' &&
+    typeof (installation as Record<string, unknown>).id === 'number'
+      ? ((installation as Record<string, unknown>).id as number)
+      : null
+
+  const pullRequest = record.pull_request
+  const number =
+    pullRequest !== null &&
+    typeof pullRequest === 'object' &&
+    typeof (pullRequest as Record<string, unknown>).number === 'number'
+      ? ((pullRequest as Record<string, unknown>).number as number)
+      : null
+
+  let owner: string | null = null
+  let repo: string | null = null
+  const repository = record.repository
+  if (repository !== null && typeof repository === 'object') {
+    const repoRecord = repository as Record<string, unknown>
+    if (typeof repoRecord.name === 'string') repo = repoRecord.name
+    const ownerField = repoRecord.owner
+    if (
+      ownerField !== null &&
+      typeof ownerField === 'object' &&
+      typeof (ownerField as Record<string, unknown>).login === 'string'
+    ) {
+      owner = (ownerField as Record<string, unknown>).login as string
+    }
+  }
+  return { action, installationId, number, owner, repo }
+}
+
+/** Injectables for tests: mock fetch, capture enqueues/background work. */
 export type WebhookOptions = {
   fetchImpl?: typeof fetch
   waitUntilImpl?: (promise: Promise<unknown>) => void
+  /** Captures/overrides queue sends when testing. */
+  enqueueImpl?: (message: QueueMessage) => Promise<void>
+}
+
+/** Runs one job inline under waitUntil (no-queue fallback + tests). */
+function executeInline(
+  env: Env,
+  message: QueueMessage,
+  options: WebhookOptions,
+): void {
+  const schedule = options.waitUntilImpl ?? waitUntil
+  const fetchImpl = options.fetchImpl ?? fetch
+  const work =
+    message.type === 'onboarding_job'
+      ? runOnboardingJob(env, message, fetchImpl)
+      : runReviewJob(env, message, {
+          fetchImpl,
+          provider: buildReviewProvider(env),
+        })
+  schedule(
+    work
+      .then((result) => {
+        if (result.status === 'posted') {
+          console.log(`background job finished: ${message.type} posted`)
+        } else {
+          console.log(
+            `background job finished: ${message.type} skipped (${result.reason ?? 'unknown'})`,
+          )
+        }
+      })
+      .catch(() => {
+        // One safe line; error text could carry untrusted content
+        // (spec §13), so details stay out of the log.
+        console.log(`background job errored: ${message.type}`)
+      }),
+  )
+}
+
+/** Queue send with inline fallback when the binding is unavailable. */
+function makeEnqueue(
+  env: Env,
+  options: WebhookOptions,
+): (message: QueueMessage) => Promise<void> {
+  if (options.enqueueImpl !== undefined) {
+    return options.enqueueImpl
+  }
+  const queue = env.REVIEW_QUEUE
+  if (queue !== undefined && typeof queue.send === 'function') {
+    return async (message) => {
+      try {
+        await queue.send(message)
+      } catch {
+        // Queue unavailable → degrade to inline execution (spec §13).
+        console.log('queue send failed: running job inline')
+        executeInline(env, message, options)
+      }
+    }
+  }
+  return async (message) => {
+    executeInline(env, message, options)
+  }
 }
 
 export async function handleWebhook(
@@ -95,7 +214,7 @@ export async function handleWebhook(
     return new Response(null, { status: 400 })
   }
 
-  // Idempotency (spec §5 step 2-3): skip deliveries already processed.
+  // Idempotency (spec §5 steps 2-3): skip deliveries already processed.
   const dedupeKey = `delivery:${deliveryId}`
   const seen = await env.IDEMPOTENCY_KV.get(dedupeKey)
   if (seen !== null) {
@@ -111,6 +230,8 @@ export async function handleWebhook(
     return new Response(null, { status: 200 })
   }
 
+  const enqueue = makeEnqueue(env, options)
+
   if (eventName === 'installation') {
     const payload = parseInstallationPayload(rawBody)
     if (payload === null) {
@@ -118,29 +239,48 @@ export async function handleWebhook(
       return new Response(null, { status: 200 })
     }
     if (payload.action === 'created' && payload.installationId !== null) {
-      const fetchImpl = options.fetchImpl ?? fetch
-      const schedule = options.waitUntilImpl ?? waitUntil
-      const jobs = payload.repositories.map(({ owner, repo }) => ({
-        installationId: payload.installationId as number,
-        owner,
-        repo,
-      }))
+      const jobs: QueueMessage[] = payload.repositories.map(
+        ({ owner, repo }) => ({
+          type: 'onboarding_job',
+          installationId: payload.installationId as number,
+          owner,
+          repo,
+        }),
+      )
       console.log(
         `webhook accepted: installation created (${jobs.length} repo${jobs.length === 1 ? '' : 's'})`,
       )
       for (const job of jobs) {
-        schedule(
-          runOnboardingJob(env, job, fetchImpl).catch(() => {
-            // One safe line; error text could carry untrusted content
-            // (spec §13), so details stay out of the log.
-            console.log('onboarding failed: background job errored')
-          }),
-        )
+        await enqueue(job)
       }
     } else if (payload.action === 'deleted') {
       console.log('webhook accepted: installation deleted')
     } else {
       console.log('webhook accepted: installation (unhandled action)')
+    }
+    return new Response(null, { status: 200 })
+  }
+
+  if (eventName === 'pull_request') {
+    const payload = parsePullRequestPayload(rawBody)
+    if (
+      payload !== null &&
+      (payload.action === 'opened' || payload.action === 'synchronize') &&
+      payload.installationId !== null &&
+      payload.number !== null &&
+      payload.owner !== null &&
+      payload.repo !== null
+    ) {
+      console.log(`webhook accepted: pull_request ${payload.action}`)
+      await enqueue({
+        type: 'review_job',
+        installationId: payload.installationId,
+        owner: payload.owner,
+        repo: payload.repo,
+        number: payload.number,
+      })
+    } else {
+      console.log('webhook accepted: pull_request (ignored action)')
     }
     return new Response(null, { status: 200 })
   }
