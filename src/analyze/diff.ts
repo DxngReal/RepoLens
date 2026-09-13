@@ -11,6 +11,10 @@
  * Files over budget are *noted as skipped*, never silently dropped
  * (spec §9: "note skipped files"). Nothing here throws on adversarial
  * content; all inputs are untrusted data.
+ *
+ * This comment block is a small, non-breaking change added during the
+ * v0.1.0 release verification so the PR review pipeline can be tested
+ * end to end on a real repo.
  */
 
 import type { PrFile } from '../github/pulls'
