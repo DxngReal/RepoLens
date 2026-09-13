@@ -1,0 +1,31 @@
+# RepoLens CI (spec §12): install, biome check, tsc --noEmit, vitest run.
+# No real GitHub or LLM API calls in CI, ever — tests are fully mocked.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Biome check (lint + format)
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests (Workers runtime, mocked I/O only)
+        run: npm run test
