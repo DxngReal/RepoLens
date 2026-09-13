@@ -16,8 +16,9 @@
   "observability": {
     "enabled": true
   },
-  "vars": {		// Numeric GitHub App id (registered 2026-09-13, spec §6).
-		"GH_APP_ID": "4930895"
+  "vars": {
+    // Numeric GitHub App id (registered 2026-09-13, spec §6).
+    "GH_APP_ID": "4930895"
   },
   "kv_namespaces": [
     {

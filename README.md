@@ -4,10 +4,9 @@ A GitHub App that helps people understand unfamiliar repositories and
 review pull requests more quickly. On install it opens an onboarding
 report issue; on each pull request it posts one summary review comment.
 Deterministic analysis first; LLM summaries second; everything
-configurable via `.repolens.yml`.
+configurable per repo via `.repolens.yml`.
 
-**Status: v0.1.0 in active development — Phases 1–5 complete (reliability
-& security hardening done); deployment pending.**
+**Status: v0.1.0 — deployed and verified for onboarding and PR review**.
 See `PROGRESS.md` for the live milestone tracker and
 `docs/MASTER_BUILD_PROMPT.md` for the authoritative specification.
 
@@ -22,13 +21,35 @@ See `PROGRESS.md` for the live milestone tracker and
   uses only the filtered, budgeted diff; LLM failure degrades to a
   deterministic summary with an explicit note — never a fake review.
 
-## Stack
+## How to install
 
-- Cloudflare Workers + Hono + TypeScript (strict)
-- Octokit (no Probot) — GitHub App auth: JWT → installation tokens
-- Cloudflare Queues (async) + KV (idempotency/cache)
-- Gemini Flash behind an `LLMProvider` interface (free tier)
-- Vitest (Workers pool) + Biome; wrangler + smee.io for local dev
+1. Visit the public install link:
+   `https://github.com/apps/repositorieslens/installations/new`
+2. Choose **Only select repositories** and pick the repository(s) you
+   want, or **Any account** if you configured the app that way.
+3. After install, the app opens a `RepoLens onboarding report` issue on
+   each newly accessible repository within seconds.
+4. Open a pull request on the repo: the app posts one summary review
+   comment on the PR.
+
+## How to self-host / deploy
+
+RepoLens is a Cloudflare Workers app. To run your own instance:
+
+1. Clone this repository and run `npm install`.
+2. Register a GitHub App (details in `docs/MASTER_BUILD_PROMPT.md` §6
+   and `docs/DEPLOYMENT.md`).
+3. Create a KV namespace (`wrangler kv namespace create IDEMPOTENCY_KV`)
+   and update `wrangler.jsonc` with the real namespace id.
+4. Create the job queue and the DLQ (`wrangler queues create`).
+5. Set secrets (`wrangler secret put GH_PRIVATE_KEY`,
+   `wrangler secret put GH_WEBHOOK_SECRET`,
+   `wrangler secret put GEMINI_API_KEY`) and set `GH_APP_ID` in
+   `wrangler.jsonc` `vars`.
+6. Deploy (`npx wrangler deploy`). Point the GitHub App webhook URL at
+   the deployed Workers URL.
+
+Full runbook: `docs/DEPLOYMENT.md`.
 
 ## Local development
 
@@ -95,23 +116,6 @@ one-line note in the bot output (never a crash).
   issue text are never treated as instructions, and prompt-injection
   attempts in diffs do not change behavior.
 
-## Screenshots
-
-<!-- v0.1.0: add two screenshots after live verification --
-     1. an onboarding report issue on a demo repo
-     2. a `### RepoLens review` comment on a PR -->
-
-## Development checks
-
-```bash
-npm run test       # vitest (Workers runtime)
-npm run lint       # biome check (lint + format)
-npm run typecheck  # tsc --noEmit (strict)
-```
-
-CI runs exactly these three plus `npm ci` on every push and PR — no real
-GitHub or LLM API calls in CI, ever.
-
 ## Privacy
 
 Plain language:
@@ -141,6 +145,40 @@ Plain language:
 
 Full policy: docs/MASTER_BUILD_PROMPT.md §11.
 
+## Limitations
+
+- v0.1.0 scope is onboarding + one summary PR review comment only.
+  There is no inline line-by-line review, no Q&A bot, no issue triage,
+  no dashboards, and no RAG/vector search.
+- The PR review is a learning aid, not a correctness guarantee. Review
+  the diff yourself for anything security-critical.
+- LLM summaries depend on the configured provider being available; if it
+  is unavailable, the comment degrades to a deterministic summary with
+  an explicit note.
+
+## Architecture
+
+See `docs/architecture.md` for the module map and request flow and
+`docs/design-decisions.md` for the rationale behind the stack and
+deliberate exclusions.
+
+## Development checks
+
+```bash
+npm run test       # vitest (Workers runtime)
+npm run lint       # biome check (lint + format)
+npm run typecheck  # tsc --noEmit (strict)
+```
+
+CI runs exactly these three plus `npm ci` on every push and PR — no real
+GitHub or LLM API calls in CI, ever.
+
 ## License
 
 MIT — see `LICENSE`.
+
+## Screenshots
+
+<!-- v0.1.0: add two screenshots after live verification --
+     1. an onboarding report issue on a demo repo
+     2. a `### RepoLens review` comment on a PR -->
