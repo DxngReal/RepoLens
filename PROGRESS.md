@@ -34,22 +34,35 @@ Milestones (from spec §15 Phase 6, §18):
       reliability summary
 - [x] `wrangler deploy` to a public workers.dev URL — deployed 2026-09-13
       to https://repolens.dxngreal.workers.dev (smoke: healthz 200, unsigned webhook 401)
-- [ ] Secrets set via `wrangler secret put` (GH_PRIVATE_KEY,
+- [x] Secrets set via `wrangler secret put` (GH_PRIVATE_KEY,
       GH_WEBHOOK_SECRET, GEMINI_API_KEY); GH_APP_ID as var
 - [x] KV namespace: replace local placeholder id with a real namespace
-- [ ] Webhook URL in the GitHub App settings switched from smee.io to
+- [x] Webhook URL in the GitHub App settings switched from smee.io to
       the deployed Workers URL
 - [ ] Public install flow verified from a second GitHub account (manual)
-- [ ] End-to-end verification: install → onboarding issue; PR → one
-      review comment; `.repolens.yml` disable paths (manual)
+- [x] End-to-end verification: install → onboarding issue (verified)
+- [ ] PR review comment verified on a real PR
+- [ ] `.repolens.yml` disable paths verified on a real repo
 - [ ] `v0.1.0` tag prepared locally (no push; after live verification)
 
 Agent-side milestones completed this session (2026-09-13):
 
-- [x] `wrangler deploy --dry-run --outdir=dist` pre-flight: bundle
-      builds (129.25 KiB / gzip 31.97 KiB), all bindings resolve
-      (KV, queue, GH_APP_ID var). Note: real deploy will fail until
-      Note: deploy + KV steps are DONE (see validation log); runbook steps 1–4 complete.
+- [x] `wrangler deploy` to public workers.dev (real deploy, not dry-run):
+      https://repolens.dxngreal.workers.dev (version fe527aae,
+      commit 071ab57); smoke: GET /healthz → 200; unsigned POST /webhook → 401
+- [x] Secrets set via `wrangler secret put` ×3 (GH_PRIVATE_KEY,
+      GH_WEBHOOK_SECRET, GEMINI_API_KEY); GH_APP_ID var wired in
+      wrangler.jsonc and redeployed
+- [x] GitHub App registered (`RepositoriesLens`), webhook URL set to
+      `https://repolens.dxngreal.workers.dev/webhook`, permissions least
+      privilege (Contents R/O, Issues RW, Pull requests RW, Metadata R/O),
+      events: installation + pull_request
+- [x] Verified onboarding end-to-end: after permission fix + reinstall,
+      a `RepoLens onboarding report` issue appeared on
+      DxngReal/RepoLens (install → onboarding issue verified)
+- [x] Incident handling recorded: webhook secret rotation (ping 401 → 200)
+      and permission-before-install lesson (Contents missing → reinstall)
+      (docs/development-log.md)
 - [x] README screenshots placeholders added (spec §15 Phase 6:
       "README with setup + privacy + screenshots placeholders")
 - [x] `docs/DEPLOYMENT.md` — student-owned runbook: Cloudflare login,
@@ -58,10 +71,11 @@ Agent-side milestones completed this session (2026-09-13):
       URL), end-to-end verification incl. `.repolens.yml` disable
       paths, release prep, troubleshooting
 
-Exact next action: student sets the three secrets (runbook step 5) and
-GH_APP_ID var, then registers the GitHub App with the webhook pointed at
-the Workers URL (runbook step 6). Live verification follows. Nothing
-else is blocking.
+Exact next action: verify PR review comment on a real PR, then
+verify the public install flow from a second GitHub account, then
+verify `.repolens.yml` disable paths on a real repo. After those,
+prepare the `v0.1.0` tag locally and push the repo to GitHub so CI
+runs. Nothing code-side is blocking.
 
 ## Completed — Phase 5: Reliability & Security
 
@@ -315,8 +329,9 @@ Evidence (actual command results):
 Next exact action: student performs docs/DEPLOYMENT.md steps 1–8;
 report back the deployed Workers URL; then live verification + v0.1.0 tag.
 Manual steps remaining: Cloudflare login, secrets, app registration webhook URL switch.
-Blockers: deployment + live verification need Cloudflare login and app
-registration (both manual, student-owned).
+Blockers: deployment complete (Workers URL live, secrets set, app registered).
+Live verification incomplete: PR review comment, second-account install,
+`.repolens.yml` disable paths, GitHub repo push + CI, `v0.1.0` tag.
 ```
 
 ---
